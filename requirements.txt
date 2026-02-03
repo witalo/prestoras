@@ -1,0 +1,62 @@
+# ==============================================
+# PRESTORAS - Dependencias Modernas (2026)
+# Sistema de Gestión de Préstamos Multiempresa
+# ==============================================
+
+# ===== DJANGO - Framework Principal =====
+# Django 6.0 es la versión más reciente (diciembre 2025)
+# Django 5.2.10+ para estabilidad LTS (recomendado para producción)
+Django>=5.2.10,<7.0
+
+# ===== GRAPHQL - Strawberry GraphQL =====
+# Versión moderna con soporte Python 3.10+
+strawberry-graphql>=0.287.0
+strawberry-graphql-django>=0.26.0
+
+# ===== BASE DE DATOS - PostgreSQL =====
+# psycopg3 es más moderno que psycopg2 (mejor rendimiento y async)
+# psycopg[binary] incluye el binario precompilado (más fácil de instalar)
+psycopg[binary]>=3.2.0
+# Alternativa: psycopg2-binary>=2.9.9  # Si prefieres psycopg2
+
+# ===== AUTENTICACIÓN - JWT =====
+# PyJWT moderno con mejoras de seguridad
+PyJWT>=2.10.0
+
+# ===== CORS y Middleware =====
+django-cors-headers>=4.7.0
+
+# ===== ARCHIVOS ESTÁTICOS =====
+whitenoise>=6.8.0
+Pillow>=11.0.0  # Para manejo de imágenes (logos, fotos)
+
+# ===== VARIABLES DE ENTORNO =====
+python-dotenv>=1.0.0
+
+# ===== REDIS y CELERY (Tareas Asíncronas) =====
+# Versiones modernas con mejoras de rendimiento
+redis>=5.2.0
+celery>=5.4.0
+django-celery-beat>=2.8.0  # Última versión disponible: 2.8.1 (compatible con Python 3.10+)
+django-celery-results>=2.6.0
+
+# ===== UTILIDADES DJANGO =====
+django-timezone-field>=7.1
+django-redis>=5.4.0
+
+# ===== OPCIONALES - Útiles para Desarrollo =====
+# Descomentar si los necesitas:
+
+# django-extensions>=3.3.0  # Utilidades adicionales (shell_plus, runserver_plus, etc.)
+# django-debug-toolbar>=4.4.0  # Para debugging en desarrollo
+# ipython>=8.28.0  # Mejor shell interactivo
+# pytest>=8.3.0  # Para testing
+# pytest-django>=4.9.0  # Pytest para Django
+# black>=24.0.0  # Formateador de código
+# flake8>=7.1.0  # Linter de código
+
+# ===== PARA PRODUCCIÓN (Opcional) =====
+# gunicorn>=23.0.0  # Servidor WSGI para producción
+# uvicorn>=0.34.0  # Servidor ASGI para WebSockets/async
+# daphne>=4.1.0  # Servidor ASGI alternativo
+# channels>=4.1.0  # Para WebSockets (si necesitas tiempo real)

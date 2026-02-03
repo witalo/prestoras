@@ -1,0 +1,13 @@
+*.log
+*.pot
+*.pyc
+__pycache__
+
+# Backup files #
+*.bak
+#prestoras/settings.py
+#/staticfiles
+migrations
+.idea
+mediafiles
+media
