@@ -59,6 +59,13 @@ class PaymentType:
     def notes(self) -> Optional[str]:
         """Retorna las observaciones del pago (alias de observations)"""
         return self.observations
+
+    @strawberry.field(name="clientName")
+    def client_name(self) -> str:
+        """Nombre del cliente que realizó el pago (company_payments usa select_related('client'))."""
+        if getattr(self, 'client', None):
+            return self.client.full_name
+        return ""
     
     @strawberry.field
     def payment_installments(self) -> List['PaymentInstallmentType']:
@@ -80,3 +87,34 @@ class PenaltyAdjustmentType:
     Tipo GraphQL para PenaltyAdjustment (Ajuste de Mora)
     """
     pass
+
+
+@strawberry.type
+class DashboardStatsType:
+    """
+    Resumen para dashboard (multiempresa). Campos en camelCase para el frontend.
+    """
+    active_loans_count: int = strawberry.field(name="activeLoansCount")
+    total_clients_count: int = strawberry.field(name="totalClientsCount")
+    today_payments_sum: Decimal = strawberry.field(name="todayPaymentsSum")
+    total_pending_sum: Decimal = strawberry.field(name="totalPendingSum")
+
+
+@strawberry.type
+class PaymentVoucherType:
+    """
+    Datos del voucher de pago para imprimir (ej. en impresora 55mm Bluetooth).
+    Expuesto en camelCase para el frontend (paymentVoucher, paymentId, companyName, etc.).
+    """
+    payment_id: int = strawberry.field(name="paymentId")
+    company_name: str = strawberry.field(name="companyName")
+    company_ruc: Optional[str] = strawberry.field(name="companyRuc", default=None)
+    company_address: Optional[str] = strawberry.field(name="companyAddress", default=None)
+    client_name: str = strawberry.field(name="clientName")
+    client_dni: Optional[str] = strawberry.field(name="clientDni", default=None)
+    amount: Decimal = strawberry.field(name="amount")
+    payment_date: str = strawberry.field(name="paymentDate")
+    payment_method: str = strawberry.field(name="paymentMethod")
+    reference_number: Optional[str] = strawberry.field(name="referenceNumber", default=None)
+    installment_lines: List[str] = strawberry.field(name="installmentLines")
+    notes: Optional[str] = strawberry.field(name="notes", default=None)

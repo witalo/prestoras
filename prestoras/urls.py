@@ -9,7 +9,8 @@ from prestoras.views import graphql_view
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('graphql/', graphql_view, name='graphql'),  # Interfaz GraphiQL disponible en /graphql/
+    path('graphql/', graphql_view, name='graphql'),   # Con barra (recomendado)
+    path('graphql', graphql_view, name='graphql_raw'), # Sin barra: evita error APPEND_SLASH en POST (Apollo, etc.)
 ]
 
 # Servir archivos estáticos y media en desarrollo

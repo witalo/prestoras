@@ -14,6 +14,7 @@ from .types import LoanType
 from apps.companies.models import Company
 from apps.clients.models import Client
 from apps.companies.models import LoanType as CompanyLoanType
+from apps.payments.models import Payment
 
 
 @strawberry.type
@@ -46,6 +47,13 @@ class RefinanceLoanResult:
     success: bool
     message: str
     loan: Optional[LoanType] = None
+
+
+@strawberry.type
+class DeleteLoanResult:
+    """Resultado de eliminar un préstamo"""
+    success: bool
+    message: str
 
 
 def generate_installments(loan: Loan):
@@ -394,6 +402,7 @@ def update_loan(
 def update_loan_penalty(
     loan_id: int,
     penalty_applied: Decimal,
+    reason: Optional[str] = None,
     penalty_type: Optional[str] = None,
     penalty_amount: Optional[Decimal] = None,
     penalty_percentage: Optional[Decimal] = None
@@ -402,16 +411,15 @@ def update_loan_penalty(
     Mutation para ajustar manualmente la mora de un préstamo (CRÍTICO)
     
     Permite al administrador ajustar, reducir o eliminar (poner en 0) la mora.
-    Todo ajuste queda registrado en la tabla PenaltyAdjustment para auditoría.
+    Todo ajuste queda registrado en PenaltyAdjustment para auditoría.
     
     Args:
         loan_id: ID del préstamo
         penalty_applied: Nuevo monto de mora (puede ser 0 para perdonar)
-        penalty_type: Tipo de mora (opcional, si se proporciona actualiza)
+        reason: Motivo del ajuste (opcional)
+        penalty_type: Tipo de mora (opcional)
         penalty_amount: Monto de mora fija (opcional)
         penalty_percentage: Porcentaje de mora (opcional)
-    
-    Retorna el préstamo con la mora actualizada.
     """
     try:
         with transaction.atomic():
@@ -424,21 +432,17 @@ def update_loan_penalty(
                     loan=None
                 )
             
-            # Registrar ajuste para auditoría
             from apps.payments.models import PenaltyAdjustment
             previous_penalty = loan.penalty_applied
-            
             adjustment_type = 'ELIMINATE' if penalty_applied == 0 else 'REDUCE' if penalty_applied < previous_penalty else 'MODIFY'
+            reason_text = reason or f"Ajuste manual: de {previous_penalty} a {penalty_applied}"
             
-            # Crear registro de auditoría
-            # Nota: adjusted_by debería obtenerse del contexto de autenticación
-            # Por ahora lo dejamos como None, pero deberías obtenerlo de info.context
             PenaltyAdjustment.objects.create(
                 loan=loan,
                 adjustment_type=adjustment_type,
                 previous_penalty=previous_penalty,
                 new_penalty=penalty_applied,
-                reason=f"Ajuste manual de mora: de {previous_penalty} a {penalty_applied}"
+                reason=reason_text
             )
             
             # Actualizar mora del préstamo
@@ -580,3 +584,29 @@ def refinance_loan(
             message=f"Error al refinanciar préstamo: {str(e)}",
             loan=None
         )
+
+
+@strawberry.mutation
+def delete_loan(loan_id: int) -> DeleteLoanResult:
+    """
+    Elimina un préstamo. Solo se permite si no tiene ningún pago registrado.
+    """
+    try:
+        loan = Loan.objects.get(id=loan_id)
+    except Loan.DoesNotExist:
+        return DeleteLoanResult(
+            success=False,
+            message="Préstamo no encontrado"
+        )
+
+    if Payment.objects.filter(loan_id=loan_id).exists():
+        return DeleteLoanResult(
+            success=False,
+            message="No se puede eliminar el préstamo porque ya tiene pagos registrados. Solo se puede eliminar un préstamo sin pagos."
+        )
+
+    loan.delete()
+    return DeleteLoanResult(
+        success=True,
+        message="Préstamo eliminado correctamente"
+    )

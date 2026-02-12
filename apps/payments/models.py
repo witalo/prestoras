@@ -131,53 +131,78 @@ class Payment(models.Model):
     
     def save(self, *args, **kwargs):
         """
-        Guarda el pago y actualiza el estado del préstamo y cuotas
+        Guarda el pago y actualiza el estado del préstamo y cuotas.
+        El pago se aplica primero a la mora (si existe) y luego a las cuotas
+        pendientes en orden. Soporta sobrepago: si el cliente paga más que las
+        cuotas seleccionadas, el excedente se aplica a las siguientes cuotas.
         """
         super().save(*args, **kwargs)
         
-        # Actualizar préstamo
+        # Actualizar préstamo solo si está completado
         if self.status == 'COMPLETED':
-            self.loan.paid_amount += self.amount
-            self.loan.pending_amount = self.loan.total_amount - self.loan.paid_amount
+            loan = self.loan
+            remaining = self.amount
             
-            # Actualizar estado del préstamo
-            if self.loan.pending_amount <= 0:
-                self.loan.status = 'COMPLETED'
-            elif self.loan.end_date < timezone.now().date():
-                self.loan.status = 'DEFAULTING'
+            # 1) Aplicar primero a la mora (hasta reducirla a 0)
+            if loan.penalty_applied > 0 and remaining > 0:
+                amount_to_penalty = min(remaining, loan.penalty_applied)
+                loan.penalty_applied -= amount_to_penalty
+                loan.save(update_fields=['penalty_applied'])
+                remaining -= amount_to_penalty
             
-            self.loan.save(update_fields=['paid_amount', 'pending_amount', 'status'])
+            # 2) Aplicar el resto a cuotas y crear registros PaymentInstallment
+            if remaining > 0:
+                self._update_installments(remaining)
             
-            # Actualizar cuotas
-            self._update_installments()
+            # 3) Actualizar montos del préstamo
+            loan.refresh_from_db()
+            loan.paid_amount += self.amount
+            loan.pending_amount = loan.total_amount - loan.paid_amount
             
-            # Actualizar clasificación del cliente
+            if loan.pending_amount <= 0:
+                loan.status = 'COMPLETED'
+            elif loan.end_date < timezone.now().date():
+                loan.status = 'DEFAULTING'
+            
+            loan.save(update_fields=['paid_amount', 'pending_amount', 'status'])
+            
+            # 4) Clasificación del cliente
             self.client.update_classification()
     
-    def _update_installments(self):
+    def _update_installments(self, amount_to_distribute):
         """
-        Actualiza el estado de las cuotas según el pago
+        Distribuye el monto entre cuotas pendientes en orden y crea
+        PaymentInstallment para auditoría. Soporta sobrepago: si sobra monto,
+        se aplica a las siguientes cuotas.
         """
         from apps.loans.models import Installment
         
-        # Obtener cuotas pendientes ordenadas por fecha
         installments = Installment.objects.filter(
             loan=self.loan,
             status__in=['PENDING', 'OVERDUE', 'PARTIALLY_PAID']
         ).order_by('installment_number')
         
-        remaining_amount = self.amount
+        remaining_amount = amount_to_distribute
         
         for installment in installments:
             if remaining_amount <= 0:
                 break
             
-            # Calcular cuánto se puede aplicar a esta cuota
-            amount_to_apply = min(remaining_amount, installment.total_amount - installment.paid_amount)
-            installment.paid_amount += amount_to_apply
-            remaining_amount -= amount_to_apply
+            need = installment.total_amount - installment.paid_amount
+            amount_to_apply = min(remaining_amount, need)
+            if amount_to_apply <= 0:
+                continue
             
+            # Crear relación pago-cuota para el voucher y auditoría
+            PaymentInstallment.objects.update_or_create(
+                defaults={'amount_applied': amount_to_apply},
+                payment=self,
+                installment=installment
+            )
+            
+            installment.paid_amount += amount_to_apply
             installment.update_status()
+            remaining_amount -= amount_to_apply
     
     def __str__(self):
         return f"Pago #{self.id} - {self.client.full_name} - S/ {self.amount}"

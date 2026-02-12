@@ -74,11 +74,14 @@ WSGI_APPLICATION = 'prestoras.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.contrib.gis.db.backends.postgis' if os.environ.get('USE_POSTGIS') == 'True' else 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME', 'prestoras'),
+        'NAME': os.environ.get('DB_NAME', 'prestora'),
         'USER': os.environ.get('DB_USER', 'postgres'),
         'PASSWORD': os.environ.get('DB_PASSWORD', 'italo'),
         'HOST': os.environ.get('DB_HOST', 'localhost'),
         'PORT': os.environ.get('DB_PORT', '5432'),
+        'OPTIONS': {
+                    'client_encoding': 'UTF8',
+                },
         'ATOMIC_REQUESTS': True,
         'CONN_MAX_AGE': 0,
     }

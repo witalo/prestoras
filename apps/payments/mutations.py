@@ -9,9 +9,9 @@ from datetime import date, datetime
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Payment, PaymentInstallment
+from .models import Payment
 from .types import PaymentType
-from apps.loans.models import Loan, Installment
+from apps.loans.models import Loan
 from apps.clients.models import Client
 from apps.companies.models import Company
 from apps.users.models import User
@@ -46,35 +46,32 @@ def create_payment(
     amount: Decimal,
     payment_date: date,
     collector_id: int,
-    installment_ids: List[int],
     payment_methods: List[PaymentMethodInput],
+    installment_ids: Optional[List[int]] = None,
     notes: Optional[str] = None
 ) -> CreatePaymentResult:
     """
     Mutation para registrar un pago (CRÍTICO)
     
-    El cliente puede pagar con múltiples métodos de pago.
-    Ejemplo: S/ 50 en efectivo + S/ 30 por Yape = S/ 80 total
-    
-    IMPORTANTE: 
-    - Actualiza automáticamente el estado de las cuotas
-    - Actualiza el monto pagado del préstamo
-    - Actualiza la clasificación del cliente
+    - El monto se aplica primero a la mora (si existe) y luego a las cuotas
+      pendientes en orden. Soporta sobrepago: si el cliente paga más que lo
+      debido (ej. debe 200 y paga 300), el excedente se aplica a las siguientes
+      cuotas.
+    - installment_ids es opcional; si se envía vacío o no se envía, el monto se
+      distribuye automáticamente sobre todas las cuotas pendientes en orden.
     
     Args:
         loan_id: ID del préstamo
         amount: Monto total del pago
         payment_date: Fecha del pago
         collector_id: ID del cobrador que registra el pago
-        installment_ids: Lista de IDs de cuotas que se están pagando
-        payment_methods: Lista de métodos de pago (puede ser múltiples)
+        payment_methods: Lista de métodos de pago (ej. efectivo + Yape)
+        installment_ids: Opcional. Si se indica, solo se usa como referencia;
+          la distribución se hace siempre por orden de cuotas.
         notes: Notas adicionales (opcional)
-    
-    Retorna el pago registrado.
     """
     try:
         with transaction.atomic():
-            # Validar préstamo
             try:
                 loan = Loan.objects.get(id=loan_id)
             except Loan.DoesNotExist:
@@ -84,34 +81,12 @@ def create_payment(
                     payment=None
                 )
             
-            # Validar cobrador
             try:
                 collector = User.objects.get(id=collector_id, company_id=loan.company_id)
             except User.DoesNotExist:
                 return CreatePaymentResult(
                     success=False,
                     message="Cobrador no encontrado",
-                    payment=None
-                )
-            
-            # Validar que el cobrador sea cobrador
-            # if not collector.is_collector:
-            #     return CreatePaymentResult(
-            #         success=False,
-            #         message="El usuario especificado no es un cobrador",
-            #         payment=None
-            #     )
-            
-            # Validar cuotas
-            installments = Installment.objects.filter(
-                loan_id=loan_id,
-                id__in=installment_ids
-            )
-            
-            if installments.count() != len(installment_ids):
-                return CreatePaymentResult(
-                    success=False,
-                    message="Alguna cuota especificada no existe o no pertenece a este préstamo",
                     payment=None
                 )
             
@@ -127,24 +102,29 @@ def create_payment(
                     )
                 total_methods_amount += method_input.amount
             
-            # Validar que la suma de métodos coincida con el monto total
-            if abs(total_methods_amount - amount) > Decimal('0.01'):  # Permitir diferencia mínima por redondeo
+            if abs(total_methods_amount - amount) > Decimal('0.01'):
                 return CreatePaymentResult(
                     success=False,
                     message=f"La suma de métodos de pago ({total_methods_amount}) no coincide con el monto total ({amount})",
                     payment=None
                 )
             
-            # Validar que el monto no exceda lo pendiente
-            if amount > (loan.pending_amount + loan.penalty_applied):
+            if amount <= 0:
                 return CreatePaymentResult(
                     success=False,
-                    message=f"El monto del pago ({amount}) excede el saldo pendiente más mora ({loan.pending_amount + loan.penalty_applied})",
+                    message="El monto del pago debe ser mayor a cero",
                     payment=None
                 )
             
-            # Crear el pago (por ahora usamos el primer método de pago como método principal)
-            # TODO: Implementar soporte completo para múltiples métodos de pago en el modelo
+            # Monto no puede exceder saldo pendiente + mora
+            max_allowed = loan.pending_amount + loan.penalty_applied
+            if amount > max_allowed:
+                return CreatePaymentResult(
+                    success=False,
+                    message=f"El monto del pago ({amount}) excede el saldo pendiente más mora ({max_allowed})",
+                    payment=None
+                )
+            
             main_method = payment_methods[0].method if payment_methods else 'CASH'
             
             payment = Payment(
@@ -152,7 +132,7 @@ def create_payment(
                 loan=loan,
                 client=loan.client,
                 amount=amount,
-                payment_date=datetime.combine(payment_date, timezone.now().time()),
+                payment_date=timezone.make_aware(datetime.combine(payment_date, timezone.now().time())),
                 payment_method=main_method,
                 collector=collector,
                 observations=notes,
@@ -160,33 +140,8 @@ def create_payment(
             )
             payment.save()
             
-            # Crear relaciones PaymentInstallment
-            remaining_amount = amount
-            installments_list = list(installments.order_by('installment_number'))
-            
-            for installment in installments_list:
-                if remaining_amount <= 0:
-                    break
-                
-                # Calcular cuánto se aplica a esta cuota
-                amount_needed = installment.total_amount - installment.paid_amount
-                amount_to_apply = min(remaining_amount, amount_needed)
-                
-                # Crear relación pago-cuota
-                PaymentInstallment.objects.create(
-                    payment=payment,
-                    installment=installment,
-                    amount_applied=amount_to_apply
-                )
-                
-                # Actualizar cuota
-                installment.paid_amount += amount_to_apply
-                installment.update_status()
-                
-                remaining_amount -= amount_to_apply
-            
-            # El save() del Payment ya actualiza el préstamo y cliente
-            # Pero necesitamos recalcular la mora después del pago
+            # Recalcular mora después del pago (por si hay nuevos días)
+            loan.refresh_from_db()
             loan.calculate_penalty()
             
             return CreatePaymentResult(
@@ -245,7 +200,7 @@ def update_payment(
             payment.amount = amount
         
         if payment_date is not None:
-            payment.payment_date = datetime.combine(payment_date, timezone.now().time())
+            payment.payment_date = timezone.make_aware(datetime.combine(payment_date, timezone.now().time()))
         
         if payment_methods is not None:
             # Validar métodos de pago

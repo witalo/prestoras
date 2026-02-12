@@ -4,17 +4,13 @@ Versión moderna compatible con strawberry-django 0.74.0+
 """
 import strawberry
 import base64
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
 
 from .models import User
-
-
-# Forward references para tipos que se importarán después
-from typing import TYPE_CHECKING
+from apps.zones.types import ZoneType
 
 if TYPE_CHECKING:
     from apps.companies.types import CompanyType
-    from apps.zones.types import ZoneType
 
 
 @strawberry.django.type(User, fields="__all__")
@@ -88,6 +84,8 @@ class UserType:
     def company_id(self) -> Optional[int]:
         """Retorna el ID de la empresa (para facilitar el acceso desde el frontend)"""
         return self.company_id
-    
-    # Nota: El campo 'zones' se incluye automáticamente con fields="__all__"
-    # No necesitamos un método personalizado ya que es un ManyToMany field
+
+    @strawberry.field
+    def zones(self) -> List[ZoneType]:
+        """Zonas asignadas al usuario (cobrador). Para perfil y listados."""
+        return list(self.zones.all())
