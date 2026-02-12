@@ -1,0 +1,61 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+eggs/
+.eggs/
+
+# ===== Entorno virtual =====
+venv/
+.venv/
+env/
+.env/
+
+# ===== Django =====
+*.log
+*.pot
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+/media
+/media/
+/staticfiles
+/staticfiles/
+/logs
+/logs/
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+*~
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== Backup =====
+*.bak
+*.backup
+
+# ===== Variables de entorno y secretos =====
+.env
+.env.local
+.env.*.local
+*.pem
+
+# ===== Testing / coverage =====
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# Las carpetas migrations/ SÍ se suben (los .py de migraciones).
+# Solo se ignora __pycache__ dentro de ellas (ya cubierto arriba).
