@@ -4,6 +4,7 @@ Versión moderna compatible con strawberry-django 0.74.0+
 """
 import strawberry
 import base64
+from decimal import Decimal
 from typing import Optional, List
 
 from .models import Client, ClientDocument
@@ -56,6 +57,17 @@ class ClientType:
     # - is_active → isActive
     # - created_at → createdAt
     # - updated_at → updatedAt
+
+
+@strawberry.type
+class CollectionRouteItemType:
+    """
+    Item de ruta de cobro: cliente con monto a cobrar y estado (pagado/no pagado).
+    Para lista por fecha y mapa con marcadores rojo/verde.
+    """
+    client: ClientType
+    amount_to_collect: Decimal = strawberry.field(name="amountToCollect")
+    paid: bool  # True si ya pagó ese día (o cuotas ya cubiertas)
 
 
 @strawberry.django.type(ClientDocument, fields="__all__")

@@ -9,10 +9,10 @@ from decimal import Decimal
 # Métodos de pago
 PAYMENT_METHOD_CHOICES = [
     ('CASH', 'Efectivo'),
-    ('CARD', 'Tarjeta'),
-    ('BCP', 'BCP'),
     ('YAPE', 'Yape'),
     ('PLIN', 'Plin'),
+    ('CARD', 'Tarjeta'),
+    ('DAP', 'Depósito'),
     ('TRANSFER', 'Transferencia'),
 ]
 

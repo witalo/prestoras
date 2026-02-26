@@ -4,15 +4,17 @@ Incluye creación y actualización de clientes y documentos con imágenes
 """
 import strawberry
 import base64
-from typing import Optional
+from typing import List, Optional
 from decimal import Decimal
 from django.core.files.base import ContentFile
 from django.db import transaction
+from strawberry.types import Info
 
-from .models import Client, ClientDocument
+from .models import Client, ClientDocument, ClientCollector
 from .types import ClientType, ClientDocumentType
 from apps.companies.models import Company
 from apps.zones.models import Zone
+from prestoras.utils_auth import get_current_user_from_info
 
 
 @strawberry.type
@@ -494,4 +496,79 @@ def update_client(
             success=False,
             message=f"Error al actualizar cliente: {str(e)}",
             client=None
+        )
+
+
+@strawberry.type
+class AssignClientsToCollectorResult:
+    """Resultado de asignar clientes a un cobrador (cartera)."""
+    success: bool
+    message: str
+    assigned_count: int = strawberry.field(name="assignedCount", default=0)
+
+
+@strawberry.mutation(name="assignClientsToCollector")
+def assign_clients_to_collector(
+    info: Info,
+    client_ids: List[int],
+    collector_id: int,
+    company_id: int,
+    replace_existing: Optional[bool] = False
+) -> AssignClientsToCollectorResult:
+    """
+    Asignar clientes a un cobrador (cartera). Solo administrador.
+    - replace_existing: si True, reemplaza la cartera del cobrador por client_ids; si False, agrega.
+    """
+    user = get_current_user_from_info(info)
+    if not user or user.role != 'ADMIN':
+        return AssignClientsToCollectorResult(
+            success=False,
+            message="Solo un administrador puede asignar cartera.",
+            assigned_count=0
+        )
+    if user.company_id != company_id:
+        return AssignClientsToCollectorResult(
+            success=False,
+            message="Empresa no coincide.",
+            assigned_count=0
+        )
+    from apps.users.models import User
+    try:
+        collector = User.objects.get(id=collector_id, company_id=company_id, role='COLLECTOR')
+    except User.DoesNotExist:
+        return AssignClientsToCollectorResult(
+            success=False,
+            message="Cobrador no encontrado.",
+            assigned_count=0
+        )
+    if not client_ids:
+        return AssignClientsToCollectorResult(
+            success=True,
+            message="No hay clientes para asignar.",
+            assigned_count=0
+        )
+    # Validar que todos los clientes sean de la empresa
+    clients = list(Client.objects.filter(id__in=client_ids, company_id=company_id, is_active=True))
+    if len(clients) != len(client_ids):
+        return AssignClientsToCollectorResult(
+            success=False,
+            message="Algunos clientes no existen o no pertenecen a la empresa.",
+            assigned_count=0
+        )
+    with transaction.atomic():
+        if replace_existing:
+            ClientCollector.objects.filter(collector=collector).delete()
+        assigned = 0
+        for client in clients:
+            _, created = ClientCollector.objects.get_or_create(
+                client=client,
+                collector=collector,
+                defaults={'assigned_by': user}
+            )
+            if created:
+                assigned += 1
+        return AssignClientsToCollectorResult(
+            success=True,
+            message=f"Se asignaron {assigned} cliente(s) al cobrador.",
+            assigned_count=assigned
         )

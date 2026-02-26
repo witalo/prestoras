@@ -1,5 +1,6 @@
 """
 Queries GraphQL para Payments usando Strawberry
+Scope: admin ve todos los pagos; cobrador solo de clientes de su cartera.
 """
 import strawberry
 from typing import Annotated, List, Optional
@@ -11,6 +12,7 @@ from strawberry.types import Info
 
 from .models import Payment
 from .types import PaymentType, PaymentVoucherType, DashboardStatsType
+from prestoras.utils_auth import get_current_user_from_info
 
 
 # Métodos de pago legibles para el voucher
@@ -37,8 +39,17 @@ class PaymentQuery:
         loan_id: int
     ) -> List[PaymentType]:
         """
-        Obtener pagos de un préstamo
+        Obtener pagos de un préstamo. Cobrador solo si el préstamo es de su cartera.
         """
+        from apps.loans.models import Loan
+        user = get_current_user_from_info(info)
+        if user and user.role == 'COLLECTOR':
+            try:
+                loan = Loan.objects.get(id=loan_id)
+                if loan.company_id != user.company_id or not user.assigned_clients.filter(id=loan.client_id).exists():
+                    return []
+            except Loan.DoesNotExist:
+                return []
         return list(Payment.objects.filter(loan_id=loan_id).order_by('-payment_date'))
     
     @strawberry.field
@@ -72,10 +83,15 @@ class PaymentQuery:
     @strawberry.field
     def payment(self, info: Info, payment_id: int) -> Optional[PaymentType]:
         """
-        Obtener un pago específico por ID
+        Obtener un pago por ID. Cobrador solo si el cliente está en su cartera.
         """
         try:
-            return Payment.objects.select_related('loan', 'client', 'collector').prefetch_related('payment_installments').get(id=payment_id)
+            obj = Payment.objects.select_related('loan', 'client', 'collector').prefetch_related('payment_installments').get(id=payment_id)
+            user = get_current_user_from_info(info)
+            if user and user.role == 'COLLECTOR':
+                if obj.company_id != user.company_id or not user.assigned_clients.filter(id=obj.client_id).exists():
+                    return None
+            return obj
         except Payment.DoesNotExist:
             return None
 
@@ -89,14 +105,19 @@ class PaymentQuery:
         collector_id: Optional[int] = None
     ) -> List[PaymentType]:
         """
-        Obtener pagos de la empresa en un rango de fechas.
-        Opcionalmente filtrar por cobrador.
+        Obtener pagos de la empresa. Cobrador: solo pagos de clientes de su cartera.
         """
         queryset = Payment.objects.filter(
             company_id=company_id,
             status='COMPLETED'
         ).select_related('loan', 'client', 'collector')
-        if collector_id is not None:
+        user = get_current_user_from_info(info)
+        if user and user.role == 'COLLECTOR':
+            client_ids = list(user.assigned_clients.values_list('id', flat=True))
+            if not client_ids:
+                return []
+            queryset = queryset.filter(client_id__in=client_ids)
+        elif collector_id is not None:
             queryset = queryset.filter(collector_id=collector_id)
         if start_date:
             queryset = queryset.filter(payment_date__date__gte=start_date)
@@ -121,9 +142,9 @@ class PaymentQuery:
         today = timezone.now().date()
 
         if collector_id is not None:
-            # Cobrador: solo sus zonas → clientes de esas zonas → préstamos y pagos de ese cobrador
+            # Cobrador: solo su cartera (clientes asignados)
             try:
-                collector = User.objects.prefetch_related('zones').get(id=collector_id, company_id=company_id)
+                collector = User.objects.prefetch_related('assigned_clients').get(id=collector_id, company_id=company_id)
             except User.DoesNotExist:
                 return DashboardStatsType(
                     active_loans_count=0,
@@ -131,26 +152,15 @@ class PaymentQuery:
                     today_payments_sum=Decimal('0.00'),
                     total_pending_sum=Decimal('0.00'),
                 )
-            zone_ids = list(collector.zones.values_list('id', flat=True))
-            if not zone_ids:
+            client_ids = list(collector.assigned_clients.filter(is_active=True).values_list('id', flat=True))
+            if not client_ids:
                 return DashboardStatsType(
                     active_loans_count=0,
                     total_clients_count=0,
                     today_payments_sum=Decimal('0.00'),
                     total_pending_sum=Decimal('0.00'),
                 )
-            total_clients_count = Client.objects.filter(
-                company_id=company_id,
-                zone_id__in=zone_ids,
-                is_active=True
-            ).count()
-            client_ids = list(
-                Client.objects.filter(
-                    company_id=company_id,
-                    zone_id__in=zone_ids,
-                    is_active=True
-                ).values_list('id', flat=True)
-            )
+            total_clients_count = len(client_ids)
             active_loans_count = Loan.objects.filter(
                 company_id=company_id,
                 client_id__in=client_ids,

@@ -7,7 +7,6 @@ import base64
 from typing import Optional, List, TYPE_CHECKING
 
 from .models import User
-from apps.zones.types import ZoneType
 
 if TYPE_CHECKING:
     from apps.companies.types import CompanyType
@@ -86,6 +85,6 @@ class UserType:
         return self.company_id
 
     @strawberry.field
-    def zones(self) -> List[ZoneType]:
-        """Zonas asignadas al usuario (cobrador). Para perfil y listados."""
-        return list(self.zones.all())
+    def assigned_client_ids(self) -> List[strawberry.ID]:
+        """IDs de clientes en la cartera del cobrador."""
+        return [strawberry.ID(str(pk)) for pk in self.assigned_clients.values_list('id', flat=True)]

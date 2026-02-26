@@ -121,13 +121,8 @@ class User(AbstractUser):
         help_text='Empresa a la que pertenece este usuario'
     )
     
-    # Zonas asignadas al cobrador (ManyToMany para permitir múltiples zonas)
-    zones = models.ManyToManyField(
-        'zones.Zone',
-        related_name='collectors',
-        blank=True,
-        help_text='Zonas asignadas al cobrador'
-    )
+    # Cartera de clientes asignados (vía Client.collectors / ClientCollector).
+    # Acceso: user.assigned_clients (queryset de Client).
     
     # Campos de Django que usamos
     first_name = models.CharField('Nombres', max_length=150, blank=True)

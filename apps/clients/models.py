@@ -113,6 +113,7 @@ class Client(models.Model):
         null=True,
         blank=True,
         help_text='Coordenada GPS del negocio o domicilio'
+
     )
     
     # Clasificación del cliente
@@ -134,6 +135,18 @@ class Client(models.Model):
     
     # Estado
     is_active = models.BooleanField('Activo', default=True)
+    
+    # Cobradores asignados (cartera). Un cliente puede tener uno o más cobradores.
+    # Relación vía ClientCollector para permitir auditoría y cobertura temporal.
+    # through_fields: (client, collector) porque ClientCollector tiene también assigned_by FK a User.
+    collectors = models.ManyToManyField(
+        'users.User',
+        through='ClientCollector',
+        through_fields=('client', 'collector'),
+        related_name='assigned_clients',
+        blank=True,
+        help_text='Cobradores asignados a este cliente (cartera)'
+    )
     
     # Auditoría
     created_at = models.DateTimeField(auto_now_add=True)
@@ -189,6 +202,47 @@ class Client(models.Model):
             models.Index(fields=['classification']),
             models.Index(fields=['is_active']),
         ]
+
+
+class ClientCollector(models.Model):
+    """
+    Asignación cliente-cobrador (cartera).
+    Un cliente puede tener varios cobradores; un cobrador tiene su cartera de clientes.
+    Permite registrar quién asignó y cuándo (y en el futuro: cobertura temporal con fechas).
+    """
+    client = models.ForeignKey(
+        Client,
+        on_delete=models.CASCADE,
+        related_name='client_collector_assignments',
+        help_text='Cliente asignado'
+    )
+    collector = models.ForeignKey(
+        'users.User',
+        on_delete=models.CASCADE,
+        related_name='client_collector_assignments',
+        help_text='Cobrador asignado'
+    )
+    assigned_at = models.DateTimeField(auto_now_add=True, help_text='Fecha de asignación')
+    assigned_by = models.ForeignKey(
+        'users.User',
+        on_delete=models.SET_NULL,
+        related_name='client_assignments_made',
+        null=True,
+        blank=True,
+        help_text='Usuario que realizó la asignación (admin)'
+    )
+    
+    class Meta:
+        verbose_name = 'Asignación Cliente-Cobrador'
+        verbose_name_plural = 'Asignaciones Cliente-Cobrador'
+        unique_together = [['client', 'collector']]
+        indexes = [
+            models.Index(fields=['collector']),
+            models.Index(fields=['client']),
+        ]
+    
+    def __str__(self):
+        return f"{self.client.full_name} → {self.collector.full_name}"
 
 
 class ClientDocument(models.Model):

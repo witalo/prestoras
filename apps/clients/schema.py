@@ -6,10 +6,11 @@ import strawberry
 
 from .queries import ClientQuery
 from .mutations import (
-    create_client_document, 
+    create_client_document,
     update_client_document,
     create_client,
-    update_client
+    update_client,
+    assign_clients_to_collector,
 )
 
 
@@ -22,6 +23,7 @@ class ClientMutation:
     update_client = update_client
     create_client_document = create_client_document
     update_client_document = update_client_document
+    assign_clients_to_collector = assign_clients_to_collector
 
 
 __all__ = ['ClientQuery', 'ClientMutation']
