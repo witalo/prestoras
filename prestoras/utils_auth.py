@@ -32,3 +32,13 @@ def get_user_from_jwt(request):
     except Exception as e:
         logger.warning("Reportes auth: JWT inválido o expirado: %s", type(e).__name__)
         return None
+
+
+def get_current_user_from_info(info):
+    """
+    Obtiene el usuario actual desde el contexto GraphQL (JWT).
+    Usado para scope: admin ve todo, cobrador solo su cartera.
+    """
+    if not info.context:
+        return None
+    return info.context.get('user') if hasattr(info.context, 'get') else getattr(info.context, 'user', None)

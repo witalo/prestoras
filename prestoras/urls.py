@@ -6,7 +6,7 @@ from django.urls import path
 from django.conf import settings
 from django.conf.urls.static import static
 from prestoras.views import graphql_view
-from apps.zones.reports import zone_loans_pdf
+from apps.zones.reports import zone_loans_pdf, zone_client_pdf
 from apps.clients.reports import clientes_puntuales_pdf
 
 urlpatterns = [
@@ -15,6 +15,7 @@ urlpatterns = [
     path('graphql', graphql_view, name='graphql_raw'),
     # Reportes por app: Zones
     path('api/zones/reports/<int:zone_id>/prestamos-pdf/', zone_loans_pdf, name='zone_loans_pdf'),
+    path('api/zones/reports/<int:zone_id>/clientes-pdf/', zone_client_pdf, name='zone_client_pdf'),
     # Reportes por app: Clients
     path('api/clients/reports/puntuales-pdf/', clientes_puntuales_pdf, name='clientes_puntuales_pdf'),
 ]
