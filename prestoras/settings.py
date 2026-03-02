@@ -114,8 +114,8 @@ USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
 # STATIC_URL: URL base para servir archivos estáticos
-# STATIC_URL = '/static/'
-STATIC_URL = '/prestoras/static/'
+STATIC_URL = '/static/'
+# STATIC_URL = '/prestoras/static/'
 # STATIC_ROOT: Directorio donde se recopilan archivos estáticos para producción
 # Se usa con: python manage.py collectstatic
 STATIC_ROOT = BASE_DIR / 'staticfiles'
@@ -129,8 +129,8 @@ STATICFILES_DIRS = [
 
 # Media files (archivos subidos por usuarios: imágenes, documentos, etc.)
 # MEDIA_URL: URL base para servir archivos media
-# MEDIA_URL = '/media/'
-MEDIA_URL = '/prestoras/media/'
+MEDIA_URL = '/media/'
+# MEDIA_URL = '/prestoras/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
