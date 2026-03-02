@@ -10,7 +10,7 @@ from apps.zones.reports import zone_loans_pdf, zone_client_pdf
 from apps.clients.reports import clientes_puntuales_pdf, clientes_activos_pdf
 
 urlpatterns = [
-    path('prestora/', admin.site.urls),
+    path('admin/', admin.site.urls),
     path('graphql/', graphql_view, name='graphql'),
     path('graphql', graphql_view, name='graphql_raw'),
     # Reportes por app: Zones
