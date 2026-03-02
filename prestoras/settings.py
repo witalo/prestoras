@@ -193,5 +193,5 @@ LOGGING = {
 # Crear directorio de logs si no existe
 os.makedirs(BASE_DIR / 'logs', exist_ok=True)
 # Prefijo de URL para cuando corre bajo /prestoras/
-FORCE_SCRIPT_NAME = '/prestoras'
-USE_X_FORWARDED_HOST = True
+# FORCE_SCRIPT_NAME = '/prestoras'
+# USE_X_FORWARDED_HOST = True
