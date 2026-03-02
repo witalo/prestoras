@@ -75,8 +75,8 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.contrib.gis.db.backends.postgis' if os.environ.get('USE_POSTGIS') == 'True' else 'django.db.backends.postgresql',
         'NAME': os.environ.get('DB_NAME', 'prestora'),
-        'USER': os.environ.get('DB_USER', 'postgres'),
-        'PASSWORD': os.environ.get('DB_PASSWORD', 'italo'),
+        'USER': os.environ.get('DB_USER', 'italo'),
+        'PASSWORD': os.environ.get('DB_PASSWORD', 'italo2025.*/'),
         'HOST': os.environ.get('DB_HOST', 'localhost'),
         'PORT': os.environ.get('DB_PORT', '5432'),
         'OPTIONS': {
