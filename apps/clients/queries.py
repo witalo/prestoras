@@ -277,7 +277,8 @@ class ClientQuery:
                 status__in=['ACTIVE', 'DEFAULTING']
             ).values_list('id', flat=True))
         if not loan_ids:
-            logger.info("collection_route_by_date: sin préstamos activos/morosos company_id=%s date=%s", company_id, target_date)
+            logger.info("collection_route_by_date: sin préstamos activos/morosos company_id=%s date=%s (client_ids=%s)", 
+                        company_id, target_date, client_ids if user.role == 'COLLECTOR' else 'ALL')
             return []
 
         # Diagnóstico: cuántas cuotas hay en total para estos préstamos (sin filtrar por fecha/estado)
@@ -289,6 +290,7 @@ class ClientQuery:
             status__in=['PENDING', 'OVERDUE', 'PARTIALLY_PAID']
         ).select_related('loan__client')
         installments_count = installments.count()
+        logger.info("collection_route_by_date: préstamos=%s cuotas_encontradas=%s date=%s", len(loan_ids), installments_count, target_date)
         if installments_count == 0 and total_installments > 0:
             # Hay cuotas pero ninguna pasa el filtro: mostrar por qué
             from django.db.models import Count
