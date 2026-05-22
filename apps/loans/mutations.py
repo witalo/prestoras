@@ -9,12 +9,14 @@ from datetime import date, timedelta
 from django.db import transaction
 from django.utils import timezone
 
+from strawberry.types import Info
 from .models import Loan, Installment
 from .types import LoanType
 from apps.companies.models import Company
 from apps.clients.models import Client
 from apps.companies.models import LoanType as CompanyLoanType
 from apps.payments.models import Payment
+from prestoras.utils_auth import get_current_user_from_info
 
 
 @strawberry.type
@@ -116,6 +118,7 @@ def generate_installments(loan: Loan):
 
 @strawberry.mutation
 def create_loan(
+    info: Info,
     company_id: int,
     client_id: int,
     initial_amount: Decimal,
@@ -152,6 +155,11 @@ def create_loan(
     
     Retorna el préstamo creado con sus cuotas generadas.
     """
+    user = get_current_user_from_info(info)
+    if not user or user.role != 'ADMIN':
+        return CreateLoanResult(success=False, message="Solo el administrador puede crear préstamos.", loan=None)
+    if user.company_id != company_id:
+        return CreateLoanResult(success=False, message="No puede crear préstamos de otra empresa.", loan=None)
     try:
         with transaction.atomic():
             # Validar empresa
@@ -272,6 +280,7 @@ def create_loan(
 
 @strawberry.mutation
 def update_loan(
+    info: Info,
     loan_id: int,
     interest_rate: Optional[Decimal] = None,
     number_of_installments: Optional[int] = None,
@@ -302,6 +311,9 @@ def update_loan(
     
     Retorna el préstamo actualizado.
     """
+    user = get_current_user_from_info(info)
+    if not user or user.role != 'ADMIN':
+        return UpdateLoanResult(success=False, message="Solo el administrador puede modificar préstamos.", loan=None)
     try:
         with transaction.atomic():
             try:
@@ -312,6 +324,8 @@ def update_loan(
                     message="Préstamo no encontrado",
                     loan=None
                 )
+            if loan.company_id != user.company_id:
+                return UpdateLoanResult(success=False, message="No puede modificar préstamos de otra empresa.", loan=None)
             
             # Actualizar campos si se proporcionan
             if interest_rate is not None:
@@ -400,6 +414,7 @@ def update_loan(
 
 @strawberry.mutation
 def update_loan_penalty(
+    info: Info,
     loan_id: int,
     penalty_applied: Decimal,
     reason: Optional[str] = None,
@@ -412,7 +427,7 @@ def update_loan_penalty(
     
     Permite al administrador ajustar, reducir o eliminar (poner en 0) la mora.
     Todo ajuste queda registrado en PenaltyAdjustment para auditoría.
-    
+
     Args:
         loan_id: ID del préstamo
         penalty_applied: Nuevo monto de mora (puede ser 0 para perdonar)
@@ -421,6 +436,9 @@ def update_loan_penalty(
         penalty_amount: Monto de mora fija (opcional)
         penalty_percentage: Porcentaje de mora (opcional)
     """
+    user = get_current_user_from_info(info)
+    if not user or user.role != 'ADMIN':
+        return UpdateLoanPenaltyResult(success=False, message="Solo el administrador puede ajustar la mora.", loan=None)
     try:
         with transaction.atomic():
             try:
@@ -431,6 +449,8 @@ def update_loan_penalty(
                     message="Préstamo no encontrado",
                     loan=None
                 )
+            if loan.company_id != user.company_id:
+                return UpdateLoanPenaltyResult(success=False, message="No puede ajustar mora de otra empresa.", loan=None)
             
             from apps.payments.models import PenaltyAdjustment
             previous_penalty = loan.penalty_applied
@@ -475,6 +495,7 @@ def update_loan_penalty(
 
 @strawberry.mutation
 def refinance_loan(
+    info: Info,
     original_loan_id: int,
     company_id: int,
     client_id: int,
@@ -506,6 +527,11 @@ def refinance_loan(
     
     Retorna el nuevo préstamo refinanciado.
     """
+    user = get_current_user_from_info(info)
+    if not user or user.role != 'ADMIN':
+        return RefinanceLoanResult(success=False, message="Solo el administrador puede refinanciar préstamos.", loan=None)
+    if user.company_id != company_id:
+        return RefinanceLoanResult(success=False, message="No puede refinanciar préstamos de otra empresa.", loan=None)
     try:
         with transaction.atomic():
             # Validar préstamo original
@@ -587,10 +613,11 @@ def refinance_loan(
 
 
 @strawberry.mutation
-def delete_loan(loan_id: int) -> DeleteLoanResult:
-    """
-    Elimina un préstamo. Solo se permite si no tiene ningún pago registrado.
-    """
+def delete_loan(info: Info, loan_id: int) -> DeleteLoanResult:
+    """Elimina un préstamo sin pagos. Solo administrador."""
+    user = get_current_user_from_info(info)
+    if not user or user.role != 'ADMIN':
+        return DeleteLoanResult(success=False, message="Solo el administrador puede eliminar préstamos.")
     try:
         loan = Loan.objects.get(id=loan_id)
     except Loan.DoesNotExist:
@@ -599,10 +626,13 @@ def delete_loan(loan_id: int) -> DeleteLoanResult:
             message="Préstamo no encontrado"
         )
 
+    if loan.company_id != user.company_id:
+        return DeleteLoanResult(success=False, message="No puede eliminar préstamos de otra empresa.")
+
     if Payment.objects.filter(loan_id=loan_id).exists():
         return DeleteLoanResult(
             success=False,
-            message="No se puede eliminar el préstamo porque ya tiene pagos registrados. Solo se puede eliminar un préstamo sin pagos."
+            message="No se puede eliminar el préstamo porque ya tiene pagos registrados."
         )
 
     loan.delete()

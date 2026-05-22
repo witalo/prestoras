@@ -138,17 +138,26 @@ class LoanQuery:
         info: Info,
         loan_id: int
     ) -> List[InstallmentType]:
-        """
-        Obtener cuotas de un préstamo
-        """
+        """Cuotas de un préstamo. Cobrador solo si el préstamo es de su cartera."""
+        user = get_current_user_from_info(info)
+        if user and user.role == 'COLLECTOR':
+            try:
+                loan = Loan.objects.get(id=loan_id)
+                if loan.company_id != user.company_id or not user.assigned_clients.filter(id=loan.client_id).exists():
+                    return []
+            except Loan.DoesNotExist:
+                return []
         return list(Installment.objects.filter(loan_id=loan_id).order_by('installment_number'))
-    
+
     @strawberry.field
     def installment(self, info: Info, installment_id: int) -> Optional[InstallmentType]:
-        """
-        Obtener una cuota específica por ID
-        """
+        """Una cuota por ID. Cobrador solo si el préstamo es de su cartera."""
+        user = get_current_user_from_info(info)
         try:
-            return Installment.objects.get(id=installment_id)
+            inst = Installment.objects.select_related('loan').get(id=installment_id)
+            if user and user.role == 'COLLECTOR':
+                if inst.loan.company_id != user.company_id or not user.assigned_clients.filter(id=inst.loan.client_id).exists():
+                    return None
+            return inst
         except Installment.DoesNotExist:
             return None

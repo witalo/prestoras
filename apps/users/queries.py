@@ -7,6 +7,7 @@ from strawberry.types import Info
 
 from .models import User
 from .types import UserType
+from prestoras.utils_auth import get_current_user_from_info
 
 
 @strawberry.type
@@ -23,34 +24,32 @@ class UserQuery:
         role: Optional[str] = None,
         is_active: Optional[bool] = True
     ) -> List[UserType]:
-        """
-        Obtener lista de usuarios
-        
-        Filtros opcionales:
-        - company_id: Filtrar por empresa
-        - role: Filtrar por rol (ADMIN, COLLECTOR)
-        - is_active: Filtrar por estado activo/inactivo
-        """
-        queryset = User.objects.all()
-        
-        if company_id:
-            queryset = queryset.filter(company_id=company_id)
-        
+        """Lista de usuarios. Solo administrador puede consultarla."""
+        current_user = get_current_user_from_info(info)
+        if not current_user or current_user.role != 'ADMIN':
+            return []
+        queryset = User.objects.filter(company_id=current_user.company_id)
+        if company_id and company_id != current_user.company_id:
+            return []
         if role:
             queryset = queryset.filter(role=role)
-        
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active)
-        
         return list(queryset.select_related('company').prefetch_related('assigned_clients'))
     
     @strawberry.field
     def user(self, info: Info, user_id: int) -> Optional[UserType]:
-        """
-        Obtener un usuario por ID
-        """
+        """Admin ve cualquier usuario de su empresa; cobrador solo se ve a sí mismo."""
+        current_user = get_current_user_from_info(info)
+        if not current_user:
+            return None
         try:
-            return User.objects.select_related('company').prefetch_related('assigned_clients').get(id=user_id)
+            obj = User.objects.select_related('company').prefetch_related('assigned_clients').get(id=user_id)
+            if current_user.role == 'COLLECTOR' and current_user.id != user_id:
+                return None
+            if obj.company_id != current_user.company_id:
+                return None
+            return obj
         except User.DoesNotExist:
             return None
     
@@ -78,13 +77,13 @@ class UserQuery:
         company_id: int,
         is_active: Optional[bool] = True
     ) -> List[UserType]:
-        """
-        Obtener cobradores de la empresa (para asignar cartera).
-        """
-        queryset = User.objects.filter(
-            role='COLLECTOR',
-            company_id=company_id
-        )
+        """Lista de cobradores de la empresa. Solo administrador."""
+        current_user = get_current_user_from_info(info)
+        if not current_user or current_user.role != 'ADMIN':
+            return []
+        if current_user.company_id != company_id:
+            return []
+        queryset = User.objects.filter(role='COLLECTOR', company_id=company_id)
         if is_active is not None:
             queryset = queryset.filter(is_active=is_active)
         return list(queryset.select_related('company').prefetch_related('assigned_clients'))

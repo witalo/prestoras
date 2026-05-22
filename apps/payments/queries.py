@@ -62,22 +62,24 @@ class PaymentQuery:
         end_date: Optional[date] = None
     ) -> List[PaymentType]:
         """
-        Obtener pagos de un cobrador en un rango de fechas
-        
-        Útil para estadísticas y reportes de cobradores.
+        Pagos de un cobrador. Admin puede ver cualquiera; cobrador solo los suyos.
         """
+        user = get_current_user_from_info(info)
+        if not user:
+            return []
+        if user.role == 'COLLECTOR' and user.id != collector_id:
+            return []
+        if user.company_id != company_id:
+            return []
         queryset = Payment.objects.filter(
             collector_id=collector_id,
             company_id=company_id,
             status='COMPLETED'
         )
-        
         if start_date:
             queryset = queryset.filter(payment_date__date__gte=start_date)
-        
         if end_date:
             queryset = queryset.filter(payment_date__date__lte=end_date)
-        
         return list(queryset.order_by('-payment_date'))
     
     @strawberry.field
@@ -140,6 +142,28 @@ class PaymentQuery:
         from apps.users.models import User
 
         today = timezone.now().date()
+
+        # Si el usuario es cobrador, forzar sus propias stats aunque no pase collector_id
+        current_user = get_current_user_from_info(info)
+        if current_user and current_user.role == 'COLLECTOR':
+            if current_user.company_id != company_id:
+                return DashboardStatsType(
+                    active_loans_count=0,
+                    total_clients_count=0,
+                    today_payments_sum=Decimal('0.00'),
+                    total_pending_sum=Decimal('0.00'),
+                )
+            # Si el cobrador pasa un collector_id distinto al suyo, bloquear
+            if collector_id is not None and collector_id != current_user.id:
+                return DashboardStatsType(
+                    active_loans_count=0,
+                    total_clients_count=0,
+                    today_payments_sum=Decimal('0.00'),
+                    total_pending_sum=Decimal('0.00'),
+                )
+            # Auto-inyectar el propio ID si no lo pasó
+            if collector_id is None:
+                collector_id = current_user.id
 
         if collector_id is not None:
             # Cobrador: solo su cartera (clientes asignados)

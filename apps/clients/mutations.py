@@ -35,6 +35,7 @@ class UpdateClientDocumentResult:
 
 @strawberry.mutation
 def create_client_document(
+    info: Info,
     client_id: int,
     document_type: str,
     file_base64: str,
@@ -51,6 +52,9 @@ def create_client_document(
     
     Retorna el documento creado con su URL y base64.
     """
+    current_user = get_current_user_from_info(info)
+    if not current_user:
+        return CreateClientDocumentResult(success=False, message="No autorizado.", document=None)
     try:
         # Validar que el cliente exista
         try:
@@ -61,6 +65,10 @@ def create_client_document(
                 message="Cliente no encontrado",
                 document=None
             )
+        if client.company_id != current_user.company_id:
+            return CreateClientDocumentResult(success=False, message="Cliente no pertenece a su empresa.", document=None)
+        if current_user.role == 'COLLECTOR' and not current_user.assigned_clients.filter(id=client_id).exists():
+            return CreateClientDocumentResult(success=False, message="Este cliente no está en su cartera.", document=None)
         
         # Validar tipo de documento
         valid_types = ['DNI', 'RECEIPT', 'ADDITIONAL', 'CONTRACT', 'OTHER']
@@ -133,6 +141,7 @@ def create_client_document(
 
 @strawberry.mutation
 def update_client_document(
+    info: Info,
     document_id: int,
     document_type: Optional[str] = None,
     file_base64: Optional[str] = None,
@@ -150,16 +159,23 @@ def update_client_document(
     Si file_base64 es None, no se actualiza el archivo.
     Si file_base64 es string vacío "", se elimina el archivo actual.
     """
+    current_user = get_current_user_from_info(info)
+    if not current_user:
+        return UpdateClientDocumentResult(success=False, message="No autorizado.", document=None)
     try:
         # Obtener el documento
         try:
-            document = ClientDocument.objects.get(id=document_id)
+            document = ClientDocument.objects.select_related('client').get(id=document_id)
         except ClientDocument.DoesNotExist:
             return UpdateClientDocumentResult(
                 success=False,
                 message="Documento no encontrado",
                 document=None
             )
+        if document.client.company_id != current_user.company_id:
+            return UpdateClientDocumentResult(success=False, message="Documento no pertenece a su empresa.", document=None)
+        if current_user.role == 'COLLECTOR' and not current_user.assigned_clients.filter(id=document.client_id).exists():
+            return UpdateClientDocumentResult(success=False, message="Este cliente no está en su cartera.", document=None)
         
         # Actualizar tipo de documento si se proporciona
         if document_type is not None:
@@ -259,6 +275,7 @@ class UpdateClientResult:
 
 @strawberry.mutation
 def create_client(
+    info: Info,
     company_id: int,
     dni: str,
     first_name: str,
@@ -293,6 +310,11 @@ def create_client(
     
     Retorna el cliente creado.
     """
+    current_user = get_current_user_from_info(info)
+    if not current_user:
+        return CreateClientResult(success=False, message="No autorizado.", client=None)
+    if current_user.company_id != company_id:
+        return CreateClientResult(success=False, message="No puede crear clientes de otra empresa.", client=None)
     try:
         # Validar que la empresa exista
         try:
@@ -369,6 +391,7 @@ def create_client(
 
 @strawberry.mutation
 def update_client(
+    info: Info,
     client_id: int,
     dni: Optional[str] = None,
     first_name: Optional[str] = None,
@@ -405,6 +428,9 @@ def update_client(
     
     Retorna el cliente actualizado.
     """
+    current_user = get_current_user_from_info(info)
+    if not current_user:
+        return UpdateClientResult(success=False, message="No autorizado.", client=None)
     try:
         # Obtener el cliente
         try:
@@ -415,6 +441,10 @@ def update_client(
                 message="Cliente no encontrado",
                 client=None
             )
+        if client.company_id != current_user.company_id:
+            return UpdateClientResult(success=False, message="No puede editar clientes de otra empresa.", client=None)
+        if current_user.role == 'COLLECTOR' and not current_user.assigned_clients.filter(id=client_id).exists():
+            return UpdateClientResult(success=False, message="Este cliente no está en su cartera.", client=None)
         
         # Actualizar campos si se proporcionan
         if dni is not None:

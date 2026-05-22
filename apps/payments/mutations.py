@@ -9,12 +9,14 @@ from datetime import date, datetime
 from django.db import transaction
 from django.utils import timezone
 
+from strawberry.types import Info
 from .models import Payment
 from .types import PaymentType
 from apps.loans.models import Loan
 from apps.clients.models import Client
 from apps.companies.models import Company
 from apps.users.models import User
+from prestoras.utils_auth import get_current_user_from_info
 
 
 @strawberry.input
@@ -42,6 +44,7 @@ class UpdatePaymentResult:
 
 @strawberry.mutation
 def create_payment(
+    info: Info,
     loan_id: int,
     amount: Decimal,
     payment_date: date,
@@ -70,6 +73,9 @@ def create_payment(
           la distribución se hace siempre por orden de cuotas.
         notes: Notas adicionales (opcional)
     """
+    current_user = get_current_user_from_info(info)
+    if not current_user:
+        return CreatePaymentResult(success=False, message="No autorizado.", payment=None)
     try:
         with transaction.atomic():
             try:
@@ -80,7 +86,17 @@ def create_payment(
                     message="Préstamo no encontrado",
                     payment=None
                 )
-            
+
+            if current_user.company_id != loan.company_id:
+                return CreatePaymentResult(success=False, message="No puede registrar pagos de otra empresa.", payment=None)
+
+            if current_user.role == 'COLLECTOR':
+                # El cobrador solo puede registrar pagos como sí mismo y sobre sus clientes
+                if current_user.id != collector_id:
+                    return CreatePaymentResult(success=False, message="Un cobrador solo puede registrar pagos a su nombre.", payment=None)
+                if not current_user.assigned_clients.filter(id=loan.client_id).exists():
+                    return CreatePaymentResult(success=False, message="Este cliente no está en su cartera.", payment=None)
+
             try:
                 collector = User.objects.get(id=collector_id, company_id=loan.company_id)
             except User.DoesNotExist:
@@ -160,6 +176,7 @@ def create_payment(
 
 @strawberry.mutation
 def update_payment(
+    info: Info,
     payment_id: int,
     amount: Optional[Decimal] = None,
     payment_date: Optional[date] = None,
@@ -178,6 +195,9 @@ def update_payment(
     
     Retorna el pago actualizado.
     """
+    current_user = get_current_user_from_info(info)
+    if not current_user or current_user.role != 'ADMIN':
+        return UpdatePaymentResult(success=False, message="Solo el administrador puede modificar pagos.", payment=None)
     try:
         try:
             payment = Payment.objects.get(id=payment_id)
@@ -187,6 +207,8 @@ def update_payment(
                 message="Pago no encontrado",
                 payment=None
             )
+        if payment.company_id != current_user.company_id:
+            return UpdatePaymentResult(success=False, message="No puede modificar pagos de otra empresa.", payment=None)
         
         # Actualizar campos si se proporcionan
         if amount is not None:

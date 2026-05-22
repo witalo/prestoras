@@ -4,10 +4,12 @@ Mutations GraphQL para Zones usando Strawberry
 import strawberry
 from typing import Optional
 from django.db import transaction
+from strawberry.types import Info
 
 from .models import Zone
 from .types import ZoneType
 from apps.companies.models import Company
+from prestoras.utils_auth import get_current_user_from_info
 
 
 @strawberry.type
@@ -28,20 +30,17 @@ class UpdateZoneResult:
 
 @strawberry.mutation
 def create_zone(
+    info: Info,
     company_id: int,
     name: str,
     description: Optional[str] = None
 ) -> CreateZoneResult:
-    """
-    Mutation para crear una nueva zona
-    
-    Args:
-        company_id: ID de la empresa
-        name: Nombre de la zona
-        description: Descripción de la zona (opcional)
-    
-    Retorna la zona creada.
-    """
+    """Crea una nueva zona. Solo administrador."""
+    user = get_current_user_from_info(info)
+    if not user or user.role != 'ADMIN':
+        return CreateZoneResult(success=False, message="Solo el administrador puede crear zonas.", zone=None)
+    if user.company_id != company_id:
+        return CreateZoneResult(success=False, message="No puede crear zonas de otra empresa.", zone=None)
     try:
         # Validar empresa
         try:
@@ -86,22 +85,16 @@ def create_zone(
 
 @strawberry.mutation
 def update_zone(
+    info: Info,
     zone_id: int,
     name: Optional[str] = None,
     description: Optional[str] = None,
     is_active: Optional[bool] = None
 ) -> UpdateZoneResult:
-    """
-    Mutation para actualizar una zona
-    
-    Args:
-        zone_id: ID de la zona a actualizar
-        name: Nuevo nombre (opcional)
-        description: Nueva descripción (opcional)
-        is_active: Nuevo estado activo/inactivo (opcional)
-    
-    Retorna la zona actualizada.
-    """
+    """Actualiza una zona. Solo administrador."""
+    user = get_current_user_from_info(info)
+    if not user or user.role != 'ADMIN':
+        return UpdateZoneResult(success=False, message="Solo el administrador puede editar zonas.", zone=None)
     try:
         # Obtener la zona
         try:
@@ -112,6 +105,8 @@ def update_zone(
                 message="Zona no encontrada",
                 zone=None
             )
+        if zone.company_id != user.company_id:
+            return UpdateZoneResult(success=False, message="No puede editar zonas de otra empresa.", zone=None)
         
         # Actualizar campos si se proporcionan
         if name is not None:
