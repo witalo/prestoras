@@ -5,7 +5,7 @@ Exporta queries y mutations relacionadas con zonas
 import strawberry
 
 from .queries import ZoneQuery
-from .mutations import create_zone, update_zone
+from .mutations import create_zone, update_zone, delete_zone
 
 
 @strawberry.type
@@ -15,6 +15,7 @@ class ZoneMutation:
     """
     create_zone = create_zone
     update_zone = update_zone
+    delete_zone = delete_zone
 
 
 __all__ = ['ZoneQuery', 'ZoneMutation']

@@ -83,6 +83,33 @@ def create_zone(
         )
 
 
+@strawberry.type
+class DeleteZoneResult:
+    success: bool
+    message: str
+
+
+@strawberry.mutation
+def delete_zone(info: Info, zone_id: int) -> DeleteZoneResult:
+    """Elimina una zona. Solo si no tiene clientes asignados."""
+    user = get_current_user_from_info(info)
+    if not user or user.role != 'ADMIN':
+        return DeleteZoneResult(success=False, message="Solo el administrador puede eliminar zonas.")
+    try:
+        zone = Zone.objects.get(id=zone_id)
+        if zone.company_id != user.company_id:
+            return DeleteZoneResult(success=False, message="No puede eliminar zonas de otra empresa.")
+        from apps.clients.models import Client
+        if Client.objects.filter(zone=zone).exists():
+            return DeleteZoneResult(success=False, message="No se puede eliminar: la zona tiene clientes asignados.")
+        zone.delete()
+        return DeleteZoneResult(success=True, message="Zona eliminada.")
+    except Zone.DoesNotExist:
+        return DeleteZoneResult(success=False, message="Zona no encontrada.")
+    except Exception as e:
+        return DeleteZoneResult(success=False, message=f"Error: {str(e)}")
+
+
 @strawberry.mutation
 def update_zone(
     info: Info,
