@@ -7,6 +7,7 @@ import strawberry
 import base64
 from typing import Optional
 from datetime import datetime
+from strawberry.types import Info
 
 # Importar los modelos
 from .models import Company, LoanType
@@ -27,11 +28,14 @@ class CompanyType:
         return f"{self.responsible_names or ''} {self.responsible_last_names or ''}".strip()
     
     @strawberry.field
-    def logo_url(self) -> Optional[str]:
-        """Retorna la URL completa del logo si existe (para acceso directo)"""
-        if self.logo:
-            return self.logo.url
-        return None
+    def logo_url(self, info: Info) -> Optional[str]:
+        """Retorna la URL absoluta del logo (incluye dominio para uso en PDF/API)"""
+        if not self.logo:
+            return None
+        request = info.context.get('request') if isinstance(info.context, dict) else getattr(info.context, 'request', None)
+        if request:
+            return request.build_absolute_uri(self.logo.url)
+        return self.logo.url
     
     @strawberry.field
     def logo_base64(self) -> Optional[str]:

@@ -4,12 +4,10 @@ Versión moderna compatible con strawberry-django 0.74.0+
 """
 import strawberry
 import base64
-from typing import Optional, List, TYPE_CHECKING
+from typing import Optional, List
 
 from .models import User
-
-if TYPE_CHECKING:
-    from apps.companies.types import CompanyType
+from apps.companies.types import CompanyType
 
 
 @strawberry.django.type(User, fields="__all__")
@@ -83,6 +81,11 @@ class UserType:
     def company_id(self) -> Optional[int]:
         """Retorna el ID de la empresa (para facilitar el acceso desde el frontend)"""
         return self.company_id
+
+    @strawberry.field
+    def company_info(self) -> Optional[CompanyType]:
+        """Retorna la empresa completa del usuario."""
+        return self.company
 
     @strawberry.field
     def assigned_client_ids(self) -> List[strawberry.ID]:

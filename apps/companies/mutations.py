@@ -1,6 +1,6 @@
 """
 Mutations GraphQL para Companies usando Strawberry
-Incluye login de empresa
+Incluye login de empresa y CRUD de tipos de préstamo
 """
 import strawberry
 from typing import Optional
@@ -8,8 +8,8 @@ from datetime import datetime, timedelta
 import jwt
 from django.conf import settings
 
-from .models import Company
-from .types import CompanyType
+from .models import Company, LoanType
+from .types import CompanyType, LoanTypeType
 
 
 @strawberry.type
@@ -132,3 +132,96 @@ def company_login(
             company=None,
             expires_at=None
         )
+
+
+@strawberry.type
+class LoanTypeResult:
+    success: bool
+    message: str
+    loan_type: Optional[LoanTypeType] = None
+
+
+@strawberry.mutation
+def create_loan_type(
+    company_id: int,
+    name: str,
+    periodicity: str,
+    interest_rate: float,
+    suggested_installments: int,
+    description: Optional[str] = None,
+) -> LoanTypeResult:
+    try:
+        company = Company.objects.get(id=company_id)
+        if LoanType.objects.filter(company=company, name=name).exists():
+            return LoanTypeResult(success=False, message="Ya existe un tipo de préstamo con ese nombre.")
+        loan_type = LoanType.objects.create(
+            company=company,
+            name=name,
+            periodicity=periodicity,
+            default_interest_rate=interest_rate,
+            suggested_installments=suggested_installments,
+            description=description,
+            is_active=True,
+        )
+        return LoanTypeResult(success=True, message="Tipo de préstamo creado exitosamente.", loan_type=loan_type)
+    except Company.DoesNotExist:
+        return LoanTypeResult(success=False, message="Empresa no encontrada.")
+    except Exception as e:
+        return LoanTypeResult(success=False, message=f"Error: {str(e)}")
+
+
+@strawberry.type
+class DeleteLoanTypeResult:
+    success: bool
+    message: str
+
+
+@strawberry.mutation
+def delete_loan_type(loan_type_id: int) -> DeleteLoanTypeResult:
+    try:
+        loan_type = LoanType.objects.get(id=loan_type_id)
+        # Solo eliminar si no tiene préstamos asociados
+        from apps.loans.models import Loan
+        if Loan.objects.filter(loan_type=loan_type).exists():
+            return DeleteLoanTypeResult(
+                success=False,
+                message="No se puede eliminar: este tipo tiene préstamos registrados. Desactívalo en su lugar."
+            )
+        loan_type.delete()
+        return DeleteLoanTypeResult(success=True, message="Tipo de préstamo eliminado.")
+    except LoanType.DoesNotExist:
+        return DeleteLoanTypeResult(success=False, message="Tipo de préstamo no encontrado.")
+    except Exception as e:
+        return DeleteLoanTypeResult(success=False, message=f"Error: {str(e)}")
+
+
+@strawberry.mutation
+def update_loan_type(
+    loan_type_id: int,
+    name: Optional[str] = None,
+    periodicity: Optional[str] = None,
+    interest_rate: Optional[float] = None,
+    suggested_installments: Optional[int] = None,
+    description: Optional[str] = None,
+    is_active: Optional[bool] = None,
+) -> LoanTypeResult:
+    try:
+        loan_type = LoanType.objects.get(id=loan_type_id)
+        if name is not None:
+            loan_type.name = name
+        if periodicity is not None:
+            loan_type.periodicity = periodicity
+        if interest_rate is not None:
+            loan_type.default_interest_rate = interest_rate
+        if suggested_installments is not None:
+            loan_type.suggested_installments = suggested_installments
+        if description is not None:
+            loan_type.description = description
+        if is_active is not None:
+            loan_type.is_active = is_active
+        loan_type.save()
+        return LoanTypeResult(success=True, message="Tipo de préstamo actualizado.", loan_type=loan_type)
+    except LoanType.DoesNotExist:
+        return LoanTypeResult(success=False, message="Tipo de préstamo no encontrado.")
+    except Exception as e:
+        return LoanTypeResult(success=False, message=f"Error: {str(e)}")

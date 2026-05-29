@@ -201,6 +201,7 @@ class Payment(models.Model):
             )
             
             installment.paid_amount += amount_to_apply
+            installment.save(update_fields=['paid_amount'])
             installment.update_status()
             remaining_amount -= amount_to_apply
     

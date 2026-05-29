@@ -148,7 +148,7 @@ def create_payment(
                 loan=loan,
                 client=loan.client,
                 amount=amount,
-                payment_date=timezone.make_aware(datetime.combine(payment_date, timezone.now().time())),
+                payment_date=timezone.make_aware(datetime.combine(payment_date, timezone.localtime().time())),
                 payment_method=main_method,
                 collector=collector,
                 observations=notes,
@@ -222,7 +222,7 @@ def update_payment(
             payment.amount = amount
         
         if payment_date is not None:
-            payment.payment_date = timezone.make_aware(datetime.combine(payment_date, timezone.now().time()))
+            payment.payment_date = timezone.make_aware(datetime.combine(payment_date, timezone.localtime().time()))
         
         if payment_methods is not None:
             # Validar métodos de pago

@@ -7,33 +7,26 @@ import base64
 from decimal import Decimal
 from typing import Optional, List
 
-from .models import Client, ClientDocument
+from .models import Client, ClientDocument, DOCUMENT_TYPE_CHOICES, REQUIRED_DOCUMENT_TYPES
 
 
 @strawberry.django.type(Client, fields="__all__")
 class ClientType:
     """
     Tipo GraphQL para Client (Cliente)
-    
+
     Representa un cliente del sistema.
     Los campos del modelo se incluyen automáticamente con fields="__all__"
     """
-    
+
     @strawberry.field
     def full_name(self) -> str:
-        """Retorna el nombre completo del cliente"""
         return f"{self.first_name} {self.last_name}".strip()
-    
-    @strawberry.field
-    def company_id(self) -> Optional[int]:
-        """Retorna el ID de la empresa (para facilitar el acceso desde el frontend)"""
-        return self.company_id
-    
+
     @strawberry.field
     def zone_id(self) -> Optional[int]:
-        """Retorna el ID de la zona (para facilitar el acceso desde el frontend)"""
         return self.zone_id
-    
+
     @strawberry.field
     def address(self) -> Optional[str]:
         """
@@ -62,12 +55,14 @@ class ClientType:
 @strawberry.type
 class CollectionRouteItemType:
     """
-    Item de ruta de cobro: cliente con monto a cobrar y estado (pagado/no pagado).
-    Para lista por fecha y mapa con marcadores rojo/verde.
+    Item de ruta de cobro: un préstamo con cuotas pendientes en esa fecha.
+    Un cliente con N préstamos activos genera N items.
     """
     client: ClientType
     amount_to_collect: Decimal = strawberry.field(name="amountToCollect")
-    paid: bool  # True si ya pagó ese día (o cuotas ya cubiertas)
+    paid: bool
+    loan_id: int = strawberry.field(name="loanId", default=0)
+    loan_status: str = strawberry.field(name="loanStatus", default="ACTIVE")
 
 
 @strawberry.django.type(ClientDocument, fields="__all__")
@@ -122,5 +117,19 @@ class ClientDocumentType:
             # Retornar en formato data URL
             return f"data:{mime_type};base64,{base64_data}"
         except Exception:
-            # Si hay algún error al leer el archivo, retornar None
             return None
+
+
+@strawberry.type
+class DocumentSlotType:
+    """
+    Estado de un slot de documento requerido del cliente.
+    Permite al frontend saber cuáles están subidos y cuáles faltan.
+    """
+    document_type: str = strawberry.field(name="documentType")
+    label: str
+    has_file: bool = strawberry.field(name="hasFile")
+    document_id: Optional[int] = strawberry.field(name="documentId", default=None)
+    file_url: Optional[str] = strawberry.field(name="fileUrl", default=None)
+    file_base64: Optional[str] = strawberry.field(name="fileBase64", default=None)
+    uploaded_at: Optional[str] = strawberry.field(name="uploadedAt", default=None)

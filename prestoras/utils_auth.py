@@ -11,16 +11,17 @@ logger = logging.getLogger(__name__)
 
 def get_user_from_jwt(request):
     """
-    Extrae y valida JWT del header Authorization: Bearer <token>.
+    Extrae y valida JWT del header Authorization o del query param ?token=.
     Retorna el payload del token o None si no es válido.
     """
     auth = request.META.get('HTTP_AUTHORIZATION') or ''
-    if not auth.startswith('Bearer '):
-        logger.warning("Reportes auth: header Authorization ausente o sin 'Bearer '")
-        return None
-    token = auth[7:].strip()
+    if auth.startswith('Bearer '):
+        token = auth[7:].strip()
+    else:
+        # Fallback: query param ?token= (usado por iframes para evitar IDM/extensiones)
+        token = request.GET.get('token', '').strip()
     if not token:
-        logger.warning("Reportes auth: token vacío después de 'Bearer '")
+        logger.warning("Reportes auth: token ausente en header y query param")
         return None
     try:
         payload = jwt.decode(

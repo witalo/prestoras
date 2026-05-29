@@ -11,7 +11,7 @@ from django.db.models import Sum
 from strawberry.types import Info
 
 from .models import Payment
-from .types import PaymentType, PaymentVoucherType, DashboardStatsType
+from .types import PaymentType, PaymentVoucherType, DashboardStatsType, CollectorStatType
 from prestoras.utils_auth import get_current_user_from_info
 
 
@@ -134,102 +134,126 @@ class PaymentQuery:
         company_id: int,
         collector_id: Optional[int] = None
     ) -> DashboardStatsType:
-        """
-        Resumen para dashboard. Si collector_id viene, solo datos del cobrador (sus clientes y sus cobros).
-        """
+        """Resumen completo para el dashboard. Admin ve toda la empresa; cobrador solo su cartera."""
         from apps.loans.models import Loan
         from apps.clients.models import Client
         from apps.users.models import User
+        from django.db.models import Count, Q
 
         today = timezone.now().date()
+        ZERO = Decimal('0.00')
 
-        # Si el usuario es cobrador, forzar sus propias stats aunque no pase collector_id
+        def _empty():
+            return DashboardStatsType(
+                total_clients=0, active_loans=0, completed_loans=0, defaulting_loans=0,
+                total_disbursed=ZERO, total_collected=ZERO, total_pending=ZERO, total_penalty=ZERO,
+                collections_today=0, amount_today=ZERO, collector_stats=[],
+            )
+
         current_user = get_current_user_from_info(info)
+
+        # Cobrador: forzar sus propias stats
         if current_user and current_user.role == 'COLLECTOR':
             if current_user.company_id != company_id:
-                return DashboardStatsType(
-                    active_loans_count=0,
-                    total_clients_count=0,
-                    today_payments_sum=Decimal('0.00'),
-                    total_pending_sum=Decimal('0.00'),
-                )
-            # Si el cobrador pasa un collector_id distinto al suyo, bloquear
+                return _empty()
             if collector_id is not None and collector_id != current_user.id:
-                return DashboardStatsType(
-                    active_loans_count=0,
-                    total_clients_count=0,
-                    today_payments_sum=Decimal('0.00'),
-                    total_pending_sum=Decimal('0.00'),
-                )
-            # Auto-inyectar el propio ID si no lo pasó
-            if collector_id is None:
-                collector_id = current_user.id
+                return _empty()
+            collector_id = current_user.id
 
         if collector_id is not None:
-            # Cobrador: solo su cartera (clientes asignados)
+            # ── Vista del cobrador: solo su cartera ──
             try:
-                collector = User.objects.prefetch_related('assigned_clients').get(id=collector_id, company_id=company_id)
-            except User.DoesNotExist:
-                return DashboardStatsType(
-                    active_loans_count=0,
-                    total_clients_count=0,
-                    today_payments_sum=Decimal('0.00'),
-                    total_pending_sum=Decimal('0.00'),
+                collector = User.objects.prefetch_related('assigned_clients').get(
+                    id=collector_id, company_id=company_id
                 )
+            except User.DoesNotExist:
+                return _empty()
+
             client_ids = list(collector.assigned_clients.filter(is_active=True).values_list('id', flat=True))
             if not client_ids:
-                return DashboardStatsType(
-                    active_loans_count=0,
-                    total_clients_count=0,
-                    today_payments_sum=Decimal('0.00'),
-                    total_pending_sum=Decimal('0.00'),
-                )
-            total_clients_count = len(client_ids)
-            active_loans_count = Loan.objects.filter(
-                company_id=company_id,
-                client_id__in=client_ids,
+                return _empty()
+
+            loans_qs = Loan.objects.filter(company_id=company_id, client_id__in=client_ids)
+            active_qs = loans_qs.filter(status__in=['ACTIVE', 'DEFAULTING'])
+
+            agg = loans_qs.aggregate(
+                disbursed=Sum('initial_amount'),
+                collected=Sum('paid_amount'),
+                penalty=Sum('penalty_applied'),
+            )
+            pending_agg = active_qs.aggregate(pending=Sum('pending_amount'))
+            today_agg = Payment.objects.filter(
+                company_id=company_id, collector_id=collector_id,
+                status='COMPLETED', payment_date__date=today
+            ).aggregate(total=Sum('amount'), cnt=Count('id'))
+
+            return DashboardStatsType(
+                total_clients=len(client_ids),
+                active_loans=loans_qs.filter(status='ACTIVE').count(),
+                completed_loans=loans_qs.filter(status='COMPLETED').count(),
+                defaulting_loans=loans_qs.filter(status='DEFAULTING').count(),
+                total_disbursed=agg['disbursed'] or ZERO,
+                total_collected=agg['collected'] or ZERO,
+                total_pending=pending_agg['pending'] or ZERO,
+                total_penalty=agg['penalty'] or ZERO,
+                collections_today=today_agg['cnt'] or 0,
+                amount_today=today_agg['total'] or ZERO,
+                collector_stats=[],
+            )
+
+        # ── Vista del admin: toda la empresa ──
+        loans_qs = Loan.objects.filter(company_id=company_id)
+        active_qs = loans_qs.filter(status__in=['ACTIVE', 'DEFAULTING'])
+
+        agg = loans_qs.aggregate(
+            disbursed=Sum('initial_amount'),
+            collected=Sum('paid_amount'),
+            penalty=Sum('penalty_applied'),
+        )
+        pending_agg = active_qs.aggregate(pending=Sum('pending_amount'))
+        today_agg = Payment.objects.filter(
+            company_id=company_id, status='COMPLETED', payment_date__date=today
+        ).aggregate(total=Sum('amount'), cnt=Count('id'))
+
+        total_clients = Client.objects.filter(company_id=company_id, is_active=True).count()
+
+        # Collector stats: un row por cobrador con clientes en la empresa
+        collector_stats = []
+        collectors = User.objects.filter(
+            company_id=company_id, role='COLLECTOR', is_active=True
+        ).prefetch_related('assigned_clients')
+
+        for col in collectors:
+            col_client_ids = list(col.assigned_clients.filter(is_active=True).values_list('id', flat=True))
+            col_active = Loan.objects.filter(
+                company_id=company_id, client_id__in=col_client_ids,
                 status__in=['ACTIVE', 'DEFAULTING']
-            ).count()
-            today_result = Payment.objects.filter(
-                company_id=company_id,
-                collector_id=collector_id,
-                status='COMPLETED',
-                payment_date__date=today
-            ).aggregate(total=Sum('amount'))
-            today_payments_sum = today_result['total'] or Decimal('0.00')
-            pending_result = Loan.objects.filter(
-                company_id=company_id,
-                client_id__in=client_ids,
-                status__in=['ACTIVE', 'DEFAULTING']
-            ).aggregate(total=Sum('pending_amount'))
-            total_pending_sum = pending_result['total'] or Decimal('0.00')
-        else:
-            # Admin: toda la empresa
-            active_loans_count = Loan.objects.filter(
-                company_id=company_id,
-                status__in=['ACTIVE', 'DEFAULTING']
-            ).count()
-            total_clients_count = Client.objects.filter(
-                company_id=company_id,
-                is_active=True
-            ).count()
-            today_result = Payment.objects.filter(
-                company_id=company_id,
-                status='COMPLETED',
-                payment_date__date=today
-            ).aggregate(total=Sum('amount'))
-            today_payments_sum = today_result['total'] or Decimal('0.00')
-            pending_result = Loan.objects.filter(
-                company_id=company_id,
-                status__in=['ACTIVE', 'DEFAULTING']
-            ).aggregate(total=Sum('pending_amount'))
-            total_pending_sum = pending_result['total'] or Decimal('0.00')
+            ).count() if col_client_ids else 0
+            col_today = Payment.objects.filter(
+                company_id=company_id, collector_id=col.id,
+                status='COMPLETED', payment_date__date=today
+            ).aggregate(total=Sum('amount'))['total'] or ZERO
+
+            collector_stats.append(CollectorStatType(
+                collector_id=col.id,
+                collector_name=col.full_name,
+                total_clients=len(col_client_ids),
+                active_loans=col_active,
+                amount_collected_today=col_today,
+            ))
 
         return DashboardStatsType(
-            active_loans_count=active_loans_count,
-            total_clients_count=total_clients_count,
-            today_payments_sum=today_payments_sum,
-            total_pending_sum=total_pending_sum,
+            total_clients=total_clients,
+            active_loans=loans_qs.filter(status='ACTIVE').count(),
+            completed_loans=loans_qs.filter(status='COMPLETED').count(),
+            defaulting_loans=loans_qs.filter(status='DEFAULTING').count(),
+            total_disbursed=agg['disbursed'] or ZERO,
+            total_collected=agg['collected'] or ZERO,
+            total_pending=pending_agg['pending'] or ZERO,
+            total_penalty=agg['penalty'] or ZERO,
+            collections_today=today_agg['cnt'] or 0,
+            amount_today=today_agg['total'] or ZERO,
+            collector_stats=collector_stats,
         )
     
     @strawberry.field(name="paymentVoucher")

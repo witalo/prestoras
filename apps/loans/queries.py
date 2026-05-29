@@ -38,23 +38,35 @@ class LoanQuery:
         company_id: int,
         client_id: Optional[int] = None,
         status: Optional[str] = None,
-        is_refinanced: Optional[bool] = None
+        statuses: Optional[List[str]] = None,
+        is_refinanced: Optional[bool] = None,
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
     ) -> List[LoanType]:
         """
         Obtener lista de préstamos. Admin: todos. Cobrador: solo de su cartera.
+        statuses (lista) tiene prioridad sobre status (singular) para multi-select.
+        start_date/end_date filtran por created_at para paginar historial.
         """
         queryset = Loan.objects.filter(company_id=company_id)
         queryset = _scope_loans_queryset(queryset, info, company_id)
-        
+
         if client_id:
             queryset = queryset.filter(client_id=client_id)
-        
-        if status:
+
+        if statuses:
+            queryset = queryset.filter(status__in=statuses)
+        elif status:
             queryset = queryset.filter(status=status)
-        
+
         if is_refinanced is not None:
             queryset = queryset.filter(is_refinanced=is_refinanced)
-        
+
+        if start_date:
+            queryset = queryset.filter(start_date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(start_date__lte=end_date)
+
         return list(queryset.select_related('company', 'client', 'loan_type', 'created_by', 'original_loan').prefetch_related('installments'))
     
     @strawberry.field
@@ -89,7 +101,7 @@ class LoanQuery:
         queryset = Loan.objects.filter(
             client_id=client_id,
             company_id=company_id,
-            status='ACTIVE'
+            status__in=['ACTIVE', 'DEFAULTING']
         )
         return list(queryset.select_related('company', 'client', 'loan_type').prefetch_related('installments'))
     

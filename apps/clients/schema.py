@@ -8,9 +8,12 @@ from .queries import ClientQuery
 from .mutations import (
     create_client_document,
     update_client_document,
+    upload_client_document,
+    delete_client_document,
     create_client,
     update_client,
     assign_clients_to_collector,
+    remove_clients_from_collector,
 )
 
 
@@ -21,9 +24,14 @@ class ClientMutation:
     """
     create_client = create_client
     update_client = update_client
+    # Documentos
+    upload_client_document = upload_client_document
+    delete_client_document = delete_client_document
+    # Mutations legacy (compatibilidad)
     create_client_document = create_client_document
     update_client_document = update_client_document
     assign_clients_to_collector = assign_clients_to_collector
+    remove_clients_from_collector = remove_clients_from_collector
 
 
 __all__ = ['ClientQuery', 'ClientMutation']

@@ -14,12 +14,16 @@ CLIENT_CLASSIFICATION_CHOICES = [
 
 # Tipos de documentos del cliente
 DOCUMENT_TYPE_CHOICES = [
-    ('DNI', 'Foto de DNI'),
-    ('RECEIPT', 'Recibo (Agua/Luz)'),
-    ('ADDITIONAL', 'Foto Adicional'),
-    ('CONTRACT', 'Contrato'),
-    ('OTHER', 'Otro'),
+    ('DNI_FRONT',     'DNI Parte Delantera'),
+    ('DNI_BACK',      'DNI Parte Trasera'),
+    ('RECEIPT_WATER', 'Recibo de Agua'),
+    ('RECEIPT_LIGHT', 'Recibo de Luz'),
+    ('CONTRACT',      'Contrato'),
+    ('OTHER',         'Otro'),
 ]
+
+# Tipos requeridos (uno por cliente): se hace upsert en upload_client_document
+REQUIRED_DOCUMENT_TYPES = ['DNI_FRONT', 'DNI_BACK', 'RECEIPT_WATER', 'RECEIPT_LIGHT']
 
 
 class Client(models.Model):

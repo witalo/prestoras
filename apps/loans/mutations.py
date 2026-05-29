@@ -4,8 +4,9 @@ Incluye creación, actualización, ajuste de mora y refinanciamiento de préstam
 """
 import strawberry
 from typing import Optional, List
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import date, timedelta
+from dateutil.relativedelta import relativedelta
 from django.db import transaction
 from django.utils import timezone
 
@@ -58,60 +59,68 @@ class DeleteLoanResult:
     message: str
 
 
+def _due_date(start: date, periodicity: str, index: int, custom_interval: int = 1) -> date:
+    """Fecha de vencimiento para la cuota en posición `index` (0-based desde start)."""
+    if periodicity == 'MONTHLY':
+        return start + relativedelta(months=index)
+    if periodicity == 'QUARTERLY':
+        return start + relativedelta(months=index * 3)
+    if periodicity == 'WEEKLY':
+        return start + timedelta(weeks=index)
+    if periodicity == 'BIWEEKLY':
+        return start + timedelta(weeks=index * 2)
+    if periodicity == 'CUSTOM':
+        return start + timedelta(days=custom_interval * index)
+    # DAILY (default)
+    return start + timedelta(days=index)
+
+
 def generate_installments(loan: Loan):
     """
-    Genera automáticamente las cuotas del préstamo según la periodicidad.
-    
-    Calcula:
-    - Capital por cuota = Monto inicial / Número de cuotas
-    - Interés por cuota = (Monto inicial * Tasa de interés / 100) / Número de cuotas
-    - Total por cuota = Capital + Interés
-    - Fecha de cada cuota según la periodicidad
+    Genera cuotas con redondeo financiero correcto (ROUND_HALF_UP a 2 decimales).
+    La última cuota absorbe el centavo de diferencia por redondeo, garantizando
+    que la suma de todas las cuotas sea exactamente igual al total del préstamo.
     """
+    n = loan.number_of_installments
+    unit = Decimal('0.01')
+
+    # Interés total redondeado a 2 dp
+    total_interest = (loan.initial_amount * loan.interest_rate / Decimal('100')).quantize(unit, rounding=ROUND_HALF_UP)
+
+    # Monto por cuota (capital e interés redondeados)
+    capital_unit = (loan.initial_amount / Decimal(str(n))).quantize(unit, rounding=ROUND_HALF_UP)
+    interest_unit = (total_interest / Decimal(str(n))).quantize(unit, rounding=ROUND_HALF_UP)
+    total_unit = capital_unit + interest_unit  # ya son 2dp
+
+    custom_interval = 1
+    if loan.periodicity == 'CUSTOM' and n > 0:
+        custom_interval = max(1, int((loan.end_date - loan.start_date).days / n))
+
     installments = []
-    capital_per_installment = loan.initial_amount / Decimal(str(loan.number_of_installments))
-    total_interest = (loan.initial_amount * loan.interest_rate) / Decimal('100')
-    interest_per_installment = total_interest / Decimal(str(loan.number_of_installments))
-    total_per_installment = capital_per_installment + interest_per_installment
-    
-    # Calcular intervalo de días según periodicidad
-    days_interval = {
-        'DAILY': 1,
-        'WEEKLY': 7,
-        'BIWEEKLY': 14,
-        'MONTHLY': 30,
-        'QUARTERLY': 90,
-        'CUSTOM': int((loan.end_date - loan.start_date).days / loan.number_of_installments)
-    }
-    interval = days_interval.get(loan.periodicity, 1)
-    
-    current_date = loan.start_date
-    
-    for i in range(1, loan.number_of_installments + 1):
-        # La última cuota se ajusta para llegar exactamente a end_date
-        if i == loan.number_of_installments:
-            current_date = loan.end_date
-            # Ajustar montos para la última cuota (ajustar por redondeo)
-            remaining_capital = loan.initial_amount - (capital_per_installment * (loan.number_of_installments - 1))
-            remaining_interest = total_interest - (interest_per_installment * (loan.number_of_installments - 1))
-            total_for_last = remaining_capital + remaining_interest
+    for i in range(1, n + 1):
+        is_last = (i == n)
+        if is_last:
+            # Última cuota = residuo exacto → suma perfecta con loan.total_amount
+            due = loan.end_date
+            cap = loan.initial_amount - capital_unit * (n - 1)
+            itr = total_interest - interest_unit * (n - 1)
+            total = loan.total_amount - total_unit * (n - 1)
         else:
-            total_for_last = total_per_installment
-        
-        installment = Installment(
+            due = _due_date(loan.start_date, loan.periodicity, i - 1, custom_interval)
+            cap = capital_unit
+            itr = interest_unit
+            total = total_unit
+
+        installments.append(Installment(
             loan=loan,
             installment_number=i,
-            due_date=current_date,
-            capital_amount=capital_per_installment if i < loan.number_of_installments else remaining_capital,
-            interest_amount=interest_per_installment if i < loan.number_of_installments else remaining_interest,
-            total_amount=total_for_last,
-            status='PENDING'
-        )
-        installments.append(installment)
-        
-        current_date += timedelta(days=interval)
-    
-    # Crear todas las cuotas en una sola transacción
+            due_date=due,
+            capital_amount=cap,
+            interest_amount=itr,
+            total_amount=total,
+            status='PENDING',
+        ))
+
     Installment.objects.bulk_create(installments)
     return installments
 

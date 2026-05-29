@@ -10,8 +10,8 @@ from django.core.files.base import ContentFile
 from django.db import transaction
 from strawberry.types import Info
 
-from .models import Client, ClientDocument, ClientCollector
-from .types import ClientType, ClientDocumentType
+from .models import Client, ClientDocument, ClientCollector, DOCUMENT_TYPE_CHOICES, REQUIRED_DOCUMENT_TYPES
+from .types import ClientType, ClientDocumentType, DocumentSlotType
 from apps.companies.models import Company
 from apps.zones.models import Zone
 from prestoras.utils_auth import get_current_user_from_info
@@ -71,7 +71,7 @@ def create_client_document(
             return CreateClientDocumentResult(success=False, message="Este cliente no está en su cartera.", document=None)
         
         # Validar tipo de documento
-        valid_types = ['DNI', 'RECEIPT', 'ADDITIONAL', 'CONTRACT', 'OTHER']
+        valid_types = [c[0] for c in DOCUMENT_TYPE_CHOICES]
         if document_type not in valid_types:
             return CreateClientDocumentResult(
                 success=False,
@@ -179,7 +179,7 @@ def update_client_document(
         
         # Actualizar tipo de documento si se proporciona
         if document_type is not None:
-            valid_types = ['DNI', 'RECEIPT', 'ADDITIONAL', 'CONTRACT', 'OTHER']
+            valid_types = [c[0] for c in DOCUMENT_TYPE_CHOICES]
             if document_type not in valid_types:
                 return UpdateClientDocumentResult(
                     success=False,
@@ -255,6 +255,162 @@ def update_client_document(
             )
 
 
+# ============ UPLOAD / DELETE DOCUMENTOS (UPSERT) ============
+
+_FILENAME_LABELS = {
+    'DNI_FRONT':     'dni_frente',
+    'DNI_BACK':      'dni_reverso',
+    'RECEIPT_WATER': 'recibo_agua',
+    'RECEIPT_LIGHT': 'recibo_luz',
+    'CONTRACT':      'contrato',
+    'OTHER':         'otro',
+}
+
+
+def _decode_base64_file(file_base64: str):
+    """Decodifica un string base64 (con o sin data URL prefix). Retorna (bytes, extension)."""
+    ext = 'jpg'
+    if ',' in file_base64:
+        header, data = file_base64.split(',', 1)
+        if 'png' in header:
+            ext = 'png'
+        elif 'pdf' in header:
+            ext = 'pdf'
+        elif 'webp' in header:
+            ext = 'webp'
+    else:
+        data = file_base64
+    return base64.b64decode(data), ext
+
+
+def _build_filename(client_dni: str, document_type: str, ext: str, unique: bool = False) -> str:
+    """
+    Genera el nombre de archivo del documento.
+    Tipos requeridos → nombre fijo: 12345678_dni_frente.jpg
+    Tipos adicionales → nombre con UUID: 12345678_contrato_a1b2c3d4.jpg
+    """
+    base = _FILENAME_LABELS.get(document_type, document_type.lower())
+    if unique:
+        import uuid
+        return f"{client_dni}_{base}_{uuid.uuid4().hex[:8]}.{ext}"
+    return f"{client_dni}_{base}.{ext}"
+
+
+@strawberry.type
+class UploadClientDocumentResult:
+    success: bool
+    message: str
+    document: Optional[ClientDocumentType] = None
+
+
+@strawberry.type
+class DeleteClientDocumentResult:
+    success: bool
+    message: str
+
+
+@strawberry.mutation(name="uploadClientDocument")
+def upload_client_document(
+    info: Info,
+    client_id: int,
+    document_type: str,
+    file_base64: str,
+    description: Optional[str] = None,
+) -> UploadClientDocumentResult:
+    """
+    Sube (o reemplaza) un documento del cliente.
+
+    Para los tipos requeridos (DNI_FRONT, DNI_BACK, RECEIPT_WATER, RECEIPT_LIGHT) solo
+    puede existir UN documento por tipo por cliente — si ya existe se sobreescribe.
+    Para CONTRACT y OTHER se permite más de uno.
+    """
+    current_user = get_current_user_from_info(info)
+    if not current_user:
+        return UploadClientDocumentResult(success=False, message="No autorizado.")
+
+    valid_types = [c[0] for c in DOCUMENT_TYPE_CHOICES]
+    if document_type not in valid_types:
+        return UploadClientDocumentResult(
+            success=False,
+            message=f"Tipo inválido. Valores: {', '.join(valid_types)}"
+        )
+
+    try:
+        client = Client.objects.get(id=client_id)
+    except Client.DoesNotExist:
+        return UploadClientDocumentResult(success=False, message="Cliente no encontrado.")
+
+    if client.company_id != current_user.company_id:
+        return UploadClientDocumentResult(success=False, message="Cliente no pertenece a su empresa.")
+
+    if current_user.role == 'COLLECTOR' and not current_user.assigned_clients.filter(id=client_id).exists():
+        return UploadClientDocumentResult(success=False, message="Este cliente no está en su cartera.")
+
+    try:
+        file_data, ext = _decode_base64_file(file_base64)
+    except Exception as e:
+        return UploadClientDocumentResult(success=False, message=f"Error al decodificar archivo: {e}")
+
+    with transaction.atomic():
+        if document_type in REQUIRED_DOCUMENT_TYPES:
+            # Nombre fijo sin UUID → siempre reemplaza el mismo archivo físico
+            file_name = _build_filename(client.dni, document_type, ext, unique=False)
+            content_file = ContentFile(file_data, name=file_name)
+            existing = ClientDocument.objects.filter(client=client, document_type=document_type).first()
+            if existing:
+                if existing.file:
+                    existing.file.delete(save=False)
+                existing.description = description or ''
+                existing.file.save(file_name, content_file, save=False)
+                existing.save()
+                document = existing
+            else:
+                document = ClientDocument(client=client, document_type=document_type, description=description or '')
+                document.file.save(file_name, content_file, save=False)
+                document.save()
+        else:
+            # CONTRACT / OTHER → nombre con UUID para no pisar anteriores
+            file_name = _build_filename(client.dni, document_type, ext, unique=True)
+            content_file = ContentFile(file_data, name=file_name)
+            document = ClientDocument(client=client, document_type=document_type, description=description or '')
+            document.file.save(file_name, content_file, save=False)
+            document.save()
+
+    label_map = dict(DOCUMENT_TYPE_CHOICES)
+    return UploadClientDocumentResult(
+        success=True,
+        message=f"{label_map.get(document_type, document_type)} subido correctamente.",
+        document=document,
+    )
+
+
+@strawberry.mutation(name="deleteClientDocument")
+def delete_client_document(
+    info: Info,
+    document_id: int,
+) -> DeleteClientDocumentResult:
+    """Elimina un documento del cliente y su archivo físico."""
+    current_user = get_current_user_from_info(info)
+    if not current_user:
+        return DeleteClientDocumentResult(success=False, message="No autorizado.")
+
+    try:
+        doc = ClientDocument.objects.select_related('client').get(id=document_id)
+    except ClientDocument.DoesNotExist:
+        return DeleteClientDocumentResult(success=False, message="Documento no encontrado.")
+
+    if doc.client.company_id != current_user.company_id:
+        return DeleteClientDocumentResult(success=False, message="No autorizado.")
+
+    if current_user.role == 'COLLECTOR' and not current_user.assigned_clients.filter(id=doc.client_id).exists():
+        return DeleteClientDocumentResult(success=False, message="Este cliente no está en su cartera.")
+
+    if doc.file:
+        doc.file.delete(save=False)
+    doc.delete()
+    return DeleteClientDocumentResult(success=True, message="Documento eliminado.")
+
+
 # ============ MUTACIONES PARA CLIENTES ============
 
 @strawberry.type
@@ -284,8 +440,8 @@ def create_client(
     email: Optional[str] = None,
     home_address: Optional[str] = None,
     business_address: Optional[str] = None,
-    latitude: Optional[Decimal] = None,
-    longitude: Optional[Decimal] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
     zone_id: Optional[int] = None,
     classification: str = "REGULAR",
     notes: Optional[str] = None
@@ -400,8 +556,8 @@ def update_client(
     email: Optional[str] = None,
     home_address: Optional[str] = None,
     business_address: Optional[str] = None,
-    latitude: Optional[Decimal] = None,
-    longitude: Optional[Decimal] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
     zone_id: Optional[int] = None,
     classification: Optional[str] = None,
     notes: Optional[str] = None,
@@ -602,3 +758,54 @@ def assign_clients_to_collector(
             message=f"Se asignaron {assigned} cliente(s) al cobrador.",
             assigned_count=assigned
         )
+
+
+@strawberry.type
+class RemoveClientsFromCollectorResult:
+    """Resultado de quitar clientes de la cartera de un cobrador."""
+    success: bool
+    message: str
+    removed_count: int = strawberry.field(name="removedCount", default=0)
+
+
+@strawberry.mutation(name="removeClientsFromCollector")
+def remove_clients_from_collector(
+    info: Info,
+    client_ids: List[int],
+    collector_id: int,
+    company_id: int,
+) -> RemoveClientsFromCollectorResult:
+    """
+    Quitar clientes de la cartera de un cobrador. Solo administrador.
+    """
+    user = get_current_user_from_info(info)
+    if not user or user.role != 'ADMIN':
+        return RemoveClientsFromCollectorResult(
+            success=False,
+            message="Solo un administrador puede modificar la cartera.",
+            removed_count=0
+        )
+    if user.company_id != company_id:
+        return RemoveClientsFromCollectorResult(
+            success=False,
+            message="Empresa no coincide.",
+            removed_count=0
+        )
+    from apps.users.models import User
+    try:
+        collector = User.objects.get(id=collector_id, company_id=company_id, role='COLLECTOR')
+    except User.DoesNotExist:
+        return RemoveClientsFromCollectorResult(
+            success=False,
+            message="Cobrador no encontrado.",
+            removed_count=0
+        )
+    removed, _ = ClientCollector.objects.filter(
+        collector=collector,
+        client_id__in=client_ids
+    ).delete()
+    return RemoveClientsFromCollectorResult(
+        success=True,
+        message=f"Se quitaron {removed} cliente(s) de la cartera.",
+        removed_count=removed
+    )

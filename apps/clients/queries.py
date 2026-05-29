@@ -13,8 +13,8 @@ from strawberry.types import Info
 from django.db.models import Q, F, Case, When, Value, IntegerField
 from django.db.models.functions import Length
 
-from .models import Client, ClientDocument
-from .types import ClientType, ClientDocumentType, CollectionRouteItemType
+from .models import Client, ClientDocument, DOCUMENT_TYPE_CHOICES, REQUIRED_DOCUMENT_TYPES
+from .types import ClientType, ClientDocumentType, CollectionRouteItemType, DocumentSlotType
 from prestoras.utils_auth import get_current_user_from_info
 from django.utils import timezone
 
@@ -191,13 +191,81 @@ class ClientQuery:
     
     @strawberry.field
     def client_document(self, info: Info, document_id: int) -> Optional[ClientDocumentType]:
-        """
-        Obtener un documento específico por ID
-        """
+        """Obtener un documento específico por ID"""
         try:
             return ClientDocument.objects.get(id=document_id)
         except ClientDocument.DoesNotExist:
             return None
+
+    @strawberry.field(name="clientDocumentSlots")
+    def client_document_slots(
+        self,
+        info: Info,
+        client_id: int,
+        include_base64: Optional[bool] = False,
+    ) -> List[DocumentSlotType]:
+        """
+        Retorna los 4 slots de documentos requeridos del cliente con su estado.
+        Permite al frontend renderizar los slots vacíos/llenos sin hacer múltiples queries.
+        include_base64: si True, incluye el contenido en base64 (solo usar cuando se necesite mostrar la imagen).
+        """
+        import base64 as b64_mod
+
+        user = get_current_user_from_info(info)
+        if not user:
+            return []
+
+        label_map = dict(DOCUMENT_TYPE_CHOICES)
+
+        # Traer los documentos de los tipos requeridos de una sola query
+        docs_qs = ClientDocument.objects.filter(
+            client_id=client_id,
+            document_type__in=REQUIRED_DOCUMENT_TYPES,
+        ).order_by('document_type', '-created_at')
+
+        # Primer documento por tipo (el más reciente)
+        docs_by_type: dict = {}
+        for doc in docs_qs:
+            if doc.document_type not in docs_by_type:
+                docs_by_type[doc.document_type] = doc
+
+        slots = []
+        for doc_type in REQUIRED_DOCUMENT_TYPES:
+            doc = docs_by_type.get(doc_type)
+            file_url = None
+            file_base64 = None
+            uploaded_at = None
+
+            if doc and doc.file:
+                try:
+                    file_url = doc.file.url
+                except Exception:
+                    file_url = None
+
+                if include_base64:
+                    try:
+                        with open(doc.file.path, 'rb') as fh:
+                            raw = fh.read()
+                        ext = doc.file.name.split('.')[-1].lower()
+                        mime = {'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png',
+                                'webp': 'image/webp', 'pdf': 'application/pdf'}.get(ext, 'application/octet-stream')
+                        file_base64 = f"data:{mime};base64,{b64_mod.b64encode(raw).decode()}"
+                    except Exception:
+                        pass
+
+                uploaded_at = doc.created_at.isoformat() if doc else None
+
+            slots.append(DocumentSlotType(
+                document_type=doc_type,
+                label=label_map.get(doc_type, doc_type),
+                has_file=bool(doc and doc.file),
+                document_id=doc.id if doc else None,
+                file_url=file_url,
+                file_base64=file_base64,
+                uploaded_at=uploaded_at,
+            ))
+
+        return slots
 
     @strawberry.field(name="collectionRouteToday")
     def collection_route_today(
@@ -281,71 +349,53 @@ class ClientQuery:
                         company_id, target_date, client_ids if user.role == 'COLLECTOR' else 'ALL')
             return []
 
-        # Diagnóstico: cuántas cuotas hay en total para estos préstamos (sin filtrar por fecha/estado)
-        total_installments = Installment.objects.filter(loan_id__in=loan_ids).count()
-        # Cuotas vencidas o con vencimiento en target_date que aún tienen saldo
-        installments = Installment.objects.filter(
-            loan_id__in=loan_ids,
-            due_date__lte=target_date,
-            status__in=['PENDING', 'OVERDUE', 'PARTIALLY_PAID']
-        ).select_related('loan__client')
-        installments_count = installments.count()
-        logger.info("collection_route_by_date: préstamos=%s cuotas_encontradas=%s date=%s", len(loan_ids), installments_count, target_date)
-        if installments_count == 0 and total_installments > 0:
-            # Hay cuotas pero ninguna pasa el filtro: mostrar por qué
-            from django.db.models import Count
-            by_status = dict(Installment.objects.filter(loan_id__in=loan_ids).values('status').annotate(n=Count('id')).values_list('status', 'n'))
-            max_due = Installment.objects.filter(loan_id__in=loan_ids).order_by('-due_date').values_list('due_date', flat=True).first()
-            min_due = Installment.objects.filter(loan_id__in=loan_ids).order_by('due_date').values_list('due_date', flat=True).first()
-            # Cuántas tienen due_date <= target (cualquier estado)
-            with_due_by = Installment.objects.filter(loan_id__in=loan_ids, due_date__lte=target_date).count()
-            # De esas, cuántas por estado
-            by_status_on_or_before = dict(Installment.objects.filter(loan_id__in=loan_ids, due_date__lte=target_date).values('status').annotate(n=Count('id')).values_list('status', 'n'))
-            logger.info("collection_route_by_date: 0 cuotas con saldo; total=%s por_status=%s min_due=%s max_due=%s con due_date<=%s: %s (por_status %s)",
-                        total_installments, by_status, min_due, max_due, target_date, with_due_by, by_status_on_or_before)
+        # Préstamos que tienen al menos una cuota vencida/pendiente hasta target_date
+        # Usamos loan.pending_amount (exacto) en vez de sumar cuota por cuota (acumula errores de redondeo)
+        from apps.loans.models import Loan as LoanModel
+        loans_with_due = LoanModel.objects.filter(
+            id__in=loan_ids,
+            pending_amount__gt=0,
+            installments__due_date__lte=target_date,
+            installments__status__in=['PENDING', 'OVERDUE', 'PARTIALLY_PAID'],
+        ).select_related('client').distinct()
 
-        # Por cliente: monto pendiente y si pagó ese día
-        per_client = {}
-        for inst in installments:
-            cid = inst.loan.client_id
-            pending = (inst.total_amount or Decimal('0')) - (inst.paid_amount or Decimal('0'))
-            if pending <= 0:
-                continue
-            if cid not in per_client:
-                per_client[cid] = {'amount': Decimal('0'), 'client': inst.loan.client}
-            per_client[cid]['amount'] += pending
-
-        if not per_client:
-            logger.info("collection_route_by_date: sin cuotas con saldo company_id=%s date=%s loans=%s installments=%s",
-                        company_id, target_date, len(loan_ids), installments_count)
+        if not loans_with_due:
+            logger.info("collection_route_by_date: sin cuotas con saldo company_id=%s date=%s",
+                        company_id, target_date)
             return []
 
-        # ¿Pagó ese día? (algún pago completado del cliente en target_date)
-        paid_client_ids = set(
+        loan_ids_with_due = [l.id for l in loans_with_due]
+        client_ids_with_due = list({l.client_id for l in loans_with_due})
+
+        # Préstamos que ya tienen al menos un pago en target_date
+        paid_loan_ids = set(
             Payment.objects.filter(
-                client_id__in=per_client.keys(),
+                loan_id__in=loan_ids_with_due,
                 status='COMPLETED',
                 payment_date__date=target_date
-            ).values_list('client_id', flat=True).distinct()
+            ).values_list('loan_id', flat=True).distinct()
         )
 
         clients_qs = Client.objects.filter(
-            id__in=per_client.keys(),
+            id__in=client_ids_with_due,
             company_id=company_id,
             is_active=True
         ).select_related('company', 'zone').prefetch_related('documents')
         clients_by_id = {c.id: c for c in clients_qs}
 
         result = []
-        for cid, data in per_client.items():
-            client = clients_by_id.get(cid) or data['client']
+        for loan in loans_with_due:
+            client = clients_by_id.get(loan.client_id) or loan.client
             result.append(CollectionRouteItemType(
                 client=client,
-                amount_to_collect=data['amount'],
-                paid=(cid in paid_client_ids)
+                amount_to_collect=loan.pending_amount,
+                paid=(loan.id in paid_loan_ids),
+                loan_id=loan.id,
+                loan_status=loan.status,
             ))
-        logger.info("collection_route_by_date: OK company_id=%s date=%s clients=%s (loans=%s installments=%s)",
-                    company_id, target_date, len(result), len(loan_ids), installments_count)
+
+        logger.info("collection_route_by_date: OK company_id=%s date=%s items=%s",
+                    company_id, target_date, len(result))
         return result
 
     @strawberry.field
