@@ -1,0 +1,130 @@
+[
+  {
+    "name": "ASA",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "ASA (PARALELO)",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "CAYMA",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "CERCADO",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "CERCADO (PARALELO)",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "CERCADO (SEMANAL)",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "CERCADO PARTE",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "CERCADO PARTE 2",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "CERCADO PARTE 3",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "CERCADO PARTE ALTA",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "CERRO COLORADO",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "CHARACATO",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "CONO NORTE (PARALELO)",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "JACOBO HUNTER",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "JLBR",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "JLBR (PARALELO)",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "JLBR (SEMANAL)",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "MARIANO MELGAR",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "MARIANO MELGAR (PARALELO)",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "MARIANO MELGAR (SEMANAL)",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "MIRAFLORES",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "MIRAFLORES (PARALELO)",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "MIRAFLORES (SEMANAL)",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "PAUCARPATA",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "PAUCARPATA (PARALELO)",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "PAUCARPATA (SEMANAL)",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "SABANDIA",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "SABANDIA (SEMANAL)",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "SOCABAYA",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "SOCABAYA (PARALELO)",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "SOCABAYA (SEMANAL)",
+    "status": "ACTIVE"
+  },
+  {
+    "name": "YANAHUARA",
+    "status": "ACTIVE"
+  }
+]

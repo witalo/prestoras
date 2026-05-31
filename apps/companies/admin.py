@@ -1,21 +1,35 @@
 from django.contrib import admin
 from django import forms
-from django.contrib.auth.hashers import make_password
 from .models import Company, LoanType
+from apps.zones.models import Zone
+
+
+class LoanTypeInline(admin.TabularInline):
+    model = LoanType
+    extra = 0
+    fields = ['name', 'periodicity', 'default_interest_rate', 'suggested_installments', 'is_active']
+    verbose_name = 'Tipo de prestamo'
+    verbose_name_plural = 'Tipos de prestamo'
+
+
+class ZoneInline(admin.TabularInline):
+    model = Zone
+    extra = 0
+    fields = ['name', 'status', 'description']
+    verbose_name = 'Zona'
+    verbose_name_plural = 'Zonas'
+    show_change_link = True
 
 
 class CompanyAdminForm(forms.ModelForm):
-    """Formulario personalizado para encriptar contraseñas"""
-    
     class Meta:
         model = Company
         fields = '__all__'
         widgets = {
             'password': forms.PasswordInput(render_value=True),
         }
-    
+
     def save(self, commit=True):
-        # Guardar sin commit para permitir que save_model maneje la encriptación
         company = super().save(commit=False)
         if commit:
             company.save()
@@ -25,25 +39,24 @@ class CompanyAdminForm(forms.ModelForm):
 @admin.register(Company)
 class CompanyAdmin(admin.ModelAdmin):
     form = CompanyAdminForm
-    list_display = ['ruc', 'legal_name', 'commercial_name', 'email', 'is_active', 'created_at']
-    list_filter = ['is_active', 'created_at']
+    list_display  = ['ruc', 'nombre_comercial', 'email', 'phone', 'is_active', 'num_clientes', 'num_prestamos_activos', 'created_at']
+    list_filter   = ['is_active', 'created_at']
     search_fields = ['ruc', 'legal_name', 'commercial_name', 'email']
     readonly_fields = ['created_at', 'updated_at']
-    
+    list_per_page = 20
+    inlines = [LoanTypeInline, ZoneInline]
+    actions = ['activar_empresas', 'desactivar_empresas']
+
     fieldsets = (
-        ('Datos de Acceso', {
+        ('Acceso', {
             'fields': ('ruc', 'email', 'password'),
-            'description': 'RUC, correo y contraseña para login de empresa'
+            'description': 'Credenciales de login de la empresa'
         }),
-        ('Datos del Responsable', {
+        ('Responsable Legal', {
             'fields': ('responsible_document', 'responsible_names', 'responsible_last_names')
         }),
         ('Datos de la Empresa', {
             'fields': ('legal_name', 'commercial_name', 'fiscal_address', 'phone')
-        }),
-        ('Ubicación', {
-            'fields': ('latitude', 'longitude'),
-            'classes': ('collapse',)
         }),
         ('Logo', {
             'fields': ('logo',)
@@ -51,24 +64,41 @@ class CompanyAdmin(admin.ModelAdmin):
         ('Estado', {
             'fields': ('is_active',)
         }),
-        ('Fechas', {
+        ('Ubicacion', {
+            'fields': ('latitude', 'longitude'),
+            'classes': ('collapse',)
+        }),
+        ('Auditoria', {
             'fields': ('created_at', 'updated_at'),
             'classes': ('collapse',)
         }),
     )
-    
+
+    @admin.display(description='Nombre comercial')
+    def nombre_comercial(self, obj):
+        return obj.commercial_name or obj.legal_name
+
+    @admin.display(description='Clientes')
+    def num_clientes(self, obj):
+        return obj.clients.filter(is_active=True).count()
+
+    @admin.display(description='Prestamos activos')
+    def num_prestamos_activos(self, obj):
+        return obj.loans.filter(status__in=['ACTIVE', 'DEFAULTING']).count()
+
+    @admin.action(description='Activar empresas seleccionadas')
+    def activar_empresas(self, request, queryset):
+        n = queryset.update(is_active=True)
+        self.message_user(request, f'{n} empresa(s) activada(s).')
+
+    @admin.action(description='Desactivar empresas seleccionadas')
+    def desactivar_empresas(self, request, queryset):
+        n = queryset.update(is_active=False)
+        self.message_user(request, f'{n} empresa(s) desactivada(s).')
+
     def save_model(self, request, obj, form, change):
-        """
-        Encripta la contraseña automáticamente si se proporciona texto plano.
-        Detecta si la contraseña ya está encriptada para evitar doble encriptación.
-        """
-        # Si hay password en el formulario
         if 'password' in form.cleaned_data and form.cleaned_data['password']:
             raw_password = form.cleaned_data['password']
-            
-            # Verificar si la contraseña ya está encriptada
-            # Las contraseñas encriptadas de Django empiezan con 'pbkdf2_', 'bcrypt$', 'argon2$', o '$'
-            # o tienen más de 60 caracteres (los hashes son largos)
             is_encrypted = (
                 raw_password.startswith('pbkdf2_') or
                 raw_password.startswith('bcrypt$') or
@@ -76,18 +106,42 @@ class CompanyAdmin(admin.ModelAdmin):
                 raw_password.startswith('$') or
                 len(raw_password) > 60
             )
-            
-            # Solo encriptar si es texto plano
             if not is_encrypted:
                 obj.set_password(raw_password)
             else:
-                # Si ya está encriptado, asignarlo directamente sin re-encriptar
                 obj.password = raw_password
-        
         super().save_model(request, obj, form, change)
+
 
 @admin.register(LoanType)
 class LoanTypeAdmin(admin.ModelAdmin):
-    list_display = ['company', 'name', 'periodicity', 'default_interest_rate', 'suggested_installments', 'is_active']
-    list_filter = ['periodicity', 'is_active']
-    search_fields = ['name', 'company__legal_name']
+    list_display  = ['name', 'company', 'periodicity', 'default_interest_rate', 'suggested_installments', 'is_active']
+    list_filter   = ['periodicity', 'is_active', 'company']
+    search_fields = ['name', 'description', 'company__legal_name', 'company__commercial_name']
+    readonly_fields = ['created_at', 'updated_at']
+    list_per_page = 30
+    actions = ['activar', 'desactivar']
+
+    fieldsets = (
+        ('Datos', {
+            'fields': ('company', 'name', 'description', 'is_active')
+        }),
+        ('Parametros por defecto', {
+            'fields': ('periodicity', 'default_interest_rate', 'suggested_installments'),
+            'description': 'Valores sugeridos al crear un prestamo de este tipo'
+        }),
+        ('Auditoria', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    @admin.action(description='Activar tipos seleccionados')
+    def activar(self, request, queryset):
+        n = queryset.update(is_active=True)
+        self.message_user(request, f'{n} tipo(s) activado(s).')
+
+    @admin.action(description='Desactivar tipos seleccionados')
+    def desactivar(self, request, queryset):
+        n = queryset.update(is_active=False)
+        self.message_user(request, f'{n} tipo(s) desactivado(s).')
