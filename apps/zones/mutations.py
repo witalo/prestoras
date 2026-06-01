@@ -33,7 +33,9 @@ def create_zone(
     info: Info,
     company_id: int,
     name: str,
-    description: Optional[str] = None
+    description: Optional[str] = None,
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
 ) -> CreateZoneResult:
     """Crea una nueva zona. Solo administrador."""
     user = get_current_user_from_info(info)
@@ -51,7 +53,7 @@ def create_zone(
                 message="Empresa no encontrada",
                 zone=None
             )
-        
+
         # Validar que no exista una zona con el mismo nombre en la empresa
         if Zone.objects.filter(company_id=company_id, name=name).exists():
             return CreateZoneResult(
@@ -59,22 +61,24 @@ def create_zone(
                 message=f"Ya existe una zona con el nombre '{name}' en esta empresa",
                 zone=None
             )
-        
+
         # Crear la zona
         zone = Zone(
             company=company,
             name=name,
             description=description,
+            latitude=latitude,
+            longitude=longitude,
             status='ACTIVE'
         )
         zone.save()
-        
+
         return CreateZoneResult(
             success=True,
             message=f"Zona '{name}' creada exitosamente",
             zone=zone
         )
-    
+
     except Exception as e:
         return CreateZoneResult(
             success=False,
@@ -116,7 +120,10 @@ def update_zone(
     zone_id: int,
     name: Optional[str] = None,
     description: Optional[str] = None,
-    is_active: Optional[bool] = None
+    latitude: Optional[float] = None,
+    longitude: Optional[float] = None,
+    status: Optional[str] = None,
+    is_active: Optional[bool] = None,
 ) -> UpdateZoneResult:
     """Actualiza una zona. Solo administrador."""
     user = get_current_user_from_info(info)
@@ -134,10 +141,9 @@ def update_zone(
             )
         if zone.company_id != user.company_id:
             return UpdateZoneResult(success=False, message="No puede editar zonas de otra empresa.", zone=None)
-        
+
         # Actualizar campos si se proporcionan
         if name is not None:
-            # Validar que no exista otra zona con el mismo nombre en la misma empresa
             if Zone.objects.filter(company_id=zone.company_id, name=name).exclude(id=zone_id).exists():
                 return UpdateZoneResult(
                     success=False,
@@ -145,22 +151,39 @@ def update_zone(
                     zone=None
                 )
             zone.name = name
-        
+
         if description is not None:
             zone.description = description
-        
+
+        if latitude is not None:
+            zone.latitude = latitude
+
+        if longitude is not None:
+            zone.longitude = longitude
+
+        # status acepta 'ACTIVE' / 'INACTIVE' directamente
+        if status is not None:
+            valid_statuses = ['ACTIVE', 'INACTIVE']
+            if status not in valid_statuses:
+                return UpdateZoneResult(
+                    success=False,
+                    message=f"Estado inválido. Debe ser ACTIVE o INACTIVE",
+                    zone=None
+                )
+            zone.status = status
+
+        # is_active como alternativa booleana (compatibilidad)
         if is_active is not None:
-            # El modelo Zone usa 'status' en lugar de 'is_active'
             zone.status = 'ACTIVE' if is_active else 'INACTIVE'
-        
+
         zone.save()
-        
+
         return UpdateZoneResult(
             success=True,
             message="Zona actualizada exitosamente",
             zone=zone
         )
-    
+
     except Exception as e:
         return UpdateZoneResult(
             success=False,
