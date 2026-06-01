@@ -72,20 +72,22 @@ class ClientQuery:
         company_id: int,
         zone_id: Optional[int] = None,
         search: Optional[str] = None,
-        limit: Optional[int] = 100
+        loan_status: Optional[str] = None,
     ) -> List[ClientType]:
         """
-        Clientes que tienen al menos un préstamo ACTIVO o DEFAULTING, para asignar cartera.
-        Solo administrador. Opcional: filtrar por zona y/o búsqueda por nombre/DNI.
+        Clientes con préstamos vigentes (ACTIVE, DEFAULTING, REFINANCED) para asignar cartera.
+        Solo administrador. Filtros: zona, búsqueda por nombre/DNI, estado de préstamo.
         """
         user = get_current_user_from_info(info)
         if not user or user.role != 'ADMIN' or user.company_id != company_id:
             return []
         from apps.loans.models import Loan
-        # IDs de clientes con al menos un préstamo activo o en mora
+        # Todos los estados que consideramos "vigentes" (no completados ni cancelados)
+        vigent_statuses = ['ACTIVE', 'DEFAULTING', 'REFINANCED']
+        filter_statuses = [loan_status] if loan_status and loan_status in vigent_statuses else vigent_statuses
         loan_qs = Loan.objects.filter(
             company_id=company_id,
-            status__in=['ACTIVE', 'DEFAULTING']
+            status__in=filter_statuses
         ).values_list('client_id', flat=True).distinct()
         client_ids = list(loan_qs)
         if not client_ids:
@@ -105,7 +107,7 @@ class ClientQuery:
                 Q(dni__icontains=search_clean)
             )
             queryset = queryset.filter(q)
-        return list(queryset.order_by('first_name', 'last_name')[: limit or 100])
+        return list(queryset.order_by('first_name', 'last_name'))
     
     @strawberry.field
     def client(self, info: Info, client_id: int) -> Optional[ClientType]:

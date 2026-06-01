@@ -141,29 +141,34 @@ def create_payment(
                     payment=None
                 )
             
-            main_method = payment_methods[0].method if payment_methods else 'CASH'
-            
-            payment = Payment(
-                company_id=loan.company_id,
-                loan=loan,
-                client=loan.client,
-                amount=amount,
-                payment_date=timezone.make_aware(datetime.combine(payment_date, timezone.localtime().time())),
-                payment_method=main_method,
-                collector=collector,
-                observations=notes,
-                status='COMPLETED'
-            )
-            payment.save()
-            
-            # Recalcular mora después del pago (por si hay nuevos días)
+            paid_dt = timezone.make_aware(datetime.combine(payment_date, timezone.localtime().time()))
+            first_payment = None
+
+            # Crear un Payment por cada método — así los reportes/filtros son exactos
+            for method_input in payment_methods:
+                p = Payment(
+                    company_id=loan.company_id,
+                    loan=loan,
+                    client=loan.client,
+                    amount=method_input.amount,
+                    payment_date=paid_dt,
+                    payment_method=method_input.method,
+                    collector=collector,
+                    observations=notes,
+                    status='COMPLETED'
+                )
+                p.save()
+                if first_payment is None:
+                    first_payment = p
+
+            # Recalcular mora después del pago
             loan.refresh_from_db()
             loan.calculate_penalty()
-            
+
             return CreatePaymentResult(
                 success=True,
                 message=f"Pago de S/ {amount} registrado exitosamente",
-                payment=payment
+                payment=first_payment
             )
     
     except Exception as e:
