@@ -9,7 +9,7 @@ from django.utils import timezone
 from apps.payments.models import Payment, PaymentInstallment
 from apps.loans.models import Installment
 
-DRY_RUN = True  # cambia a False para aplicar los cambios reales
+DRY_RUN = False  # cambia a False para aplicar los cambios reales
 
 # ─── Correcciones exactas (calculadas desde el diagnóstico) ───────────────────
 #
