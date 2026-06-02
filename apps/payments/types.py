@@ -158,3 +158,33 @@ class PaymentVoucherType:
     reference_number: Optional[str] = strawberry.field(name="referenceNumber", default=None)
     installment_lines: List[str] = strawberry.field(name="installmentLines")
     notes: Optional[str] = strawberry.field(name="notes", default=None)
+
+
+# ─── Reporte de Saldos ───────────────────────────────────────────────────────
+
+@strawberry.type
+class DailyPaymentType:
+    """Pago agregado por día para el reporte de saldos."""
+    date: str   # "YYYY-MM-DD"
+    amount: Decimal
+
+
+@strawberry.type
+class SaldosReportRowType:
+    """Fila del reporte de saldos: préstamo activo/moroso con pagos diarios."""
+    loan_id: int = strawberry.field(name="loanId")
+    client_dni: str = strawberry.field(name="clientDni")
+    client_full_name: str = strawberry.field(name="clientFullName")
+    zone_name: Optional[str] = strawberry.field(name="zoneName", default=None)
+    zone_id: Optional[int] = strawberry.field(name="zoneId", default=None)
+    loan_start_date: str = strawberry.field(name="loanStartDate")
+    initial_amount: Decimal = strawberry.field(name="initialAmount")
+    interest_rate: Decimal = strawberry.field(name="interestRate")
+    total_amount: Decimal = strawberry.field(name="totalAmount")
+    paid_amount: Decimal = strawberry.field(name="paidAmount")
+    pending_amount: Decimal = strawberry.field(name="pendingAmount")
+    loan_status: str = strawberry.field(name="loanStatus")
+    loan_type_name: Optional[str] = strawberry.field(name="loanTypeName", default=None)
+    periodicity: str
+    classification: str
+    daily_payments: List[DailyPaymentType] = strawberry.field(name="dailyPayments")

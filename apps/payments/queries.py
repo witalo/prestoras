@@ -11,7 +11,10 @@ from django.db.models import Sum
 from strawberry.types import Info
 
 from .models import Payment
-from .types import PaymentType, PaymentVoucherType, DashboardStatsType, CollectorStatType
+from .types import (
+    PaymentType, PaymentVoucherType, DashboardStatsType, CollectorStatType,
+    DailyPaymentType, SaldosReportRowType,
+)
 from prestoras.utils_auth import get_current_user_from_info
 
 
@@ -303,3 +306,127 @@ class PaymentQuery:
             installment_lines=installment_lines,
             notes=payment.observations,
         )
+
+    @strawberry.field(name="saldosReport")
+    def saldos_report(
+        self,
+        info: Info,
+        company_id: int,
+        start_date: date,
+        end_date: date,
+        zone_id: Optional[int] = None,
+        periodicity: Optional[str] = None,
+        loan_type_id: Optional[int] = None,
+    ) -> List[SaldosReportRowType]:
+        """
+        Reporte de saldos: préstamos activos/morosos con pagos diarios
+        en el rango de fechas. Soporta filtros por zona, periodicidad y tipo.
+        """
+        from apps.loans.models import Loan
+        from django.db.models import Sum
+        from django.db.models.functions import TruncDate
+        from collections import defaultdict
+        from datetime import timedelta, datetime, time as dt_time
+        from zoneinfo import ZoneInfo
+
+        user = get_current_user_from_info(info)
+        if not user:
+            return []
+
+        loans_qs = Loan.objects.filter(
+            company_id=company_id,
+            status__in=['ACTIVE', 'DEFAULTING'],
+        ).select_related('client', 'client__zone', 'loan_type')
+
+        if user.role == 'COLLECTOR':
+            client_ids = list(user.assigned_clients.values_list('id', flat=True))
+            if not client_ids:
+                return []
+            loans_qs = loans_qs.filter(client_id__in=client_ids)
+
+        if zone_id:
+            loans_qs = loans_qs.filter(client__zone_id=zone_id)
+        if periodicity:
+            loans_qs = loans_qs.filter(periodicity=periodicity)
+        if loan_type_id:
+            loans_qs = loans_qs.filter(loan_type_id=loan_type_id)
+
+        loans_list = list(
+            loans_qs.order_by('client__zone__name', 'client__last_name', 'client__first_name')
+        )
+        if not loans_list:
+            return []
+
+        loan_ids = [l.id for l in loans_list]
+
+        # TruncDate con timezone Lima para que el día sea correcto (UTC-5)
+        lima_tz = ZoneInfo('America/Lima')
+
+        # Filtro por rango completo del día en hora Lima
+        start_dt = datetime.combine(start_date, dt_time.min, tzinfo=lima_tz)
+        end_dt   = datetime.combine(end_date,   dt_time.max, tzinfo=lima_tz)
+
+        payments_agg = (
+            Payment.objects
+            .filter(
+                company_id=company_id,
+                loan_id__in=loan_ids,
+                status='COMPLETED',
+                payment_date__gte=start_dt,
+                payment_date__lte=end_dt,
+            )
+            .annotate(pay_date=TruncDate('payment_date', tzinfo=lima_tz))
+            .values('loan_id', 'pay_date')
+            .annotate(day_total=Sum('amount'))
+        )
+
+        payment_map: dict = defaultdict(dict)
+        for row in payments_agg:
+            if row['pay_date']:
+                dstr = row['pay_date'].isoformat()
+                payment_map[row['loan_id']][dstr] = row['day_total']
+
+        # Generar todas las fechas del rango
+        all_dates = []
+        cur = start_date
+        while cur <= end_date:
+            all_dates.append(cur.isoformat())
+            cur += timedelta(days=1)
+
+        result = []
+        for loan in loans_list:
+            client = loan.client
+            zone = getattr(client, 'zone', None)
+
+            daily = [
+                DailyPaymentType(
+                    date=d,
+                    amount=payment_map[loan.id].get(d, Decimal('0.00')),
+                )
+                for d in all_dates
+            ]
+
+            result.append(SaldosReportRowType(
+                loan_id=loan.id,
+                client_dni=client.dni or '',
+                client_full_name=(
+                    client.full_name
+                    if hasattr(client, 'full_name') and client.full_name
+                    else f"{client.first_name} {client.last_name}".strip()
+                ),
+                zone_name=zone.name if zone else None,
+                zone_id=zone.id if zone else None,
+                loan_start_date=loan.start_date.isoformat() if loan.start_date else '',
+                initial_amount=loan.initial_amount,
+                interest_rate=loan.interest_rate,
+                total_amount=loan.total_amount,
+                paid_amount=loan.paid_amount,
+                pending_amount=loan.pending_amount,
+                loan_status=loan.status,
+                loan_type_name=loan.loan_type.name if loan.loan_type else None,
+                periodicity=loan.periodicity,
+                classification=client.classification or 'NORMAL',
+                daily_payments=daily,
+            ))
+
+        return result
