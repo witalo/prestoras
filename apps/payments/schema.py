@@ -5,7 +5,7 @@ Exporta queries y mutations relacionadas con pagos
 import strawberry
 
 from .queries import PaymentQuery
-from .mutations import create_payment, update_payment
+from .mutations import create_payment, update_payment, correct_payment
 
 
 @strawberry.type
@@ -15,6 +15,7 @@ class PaymentMutation:
     """
     create_payment = create_payment
     update_payment = update_payment
+    correct_payment = correct_payment
 
 
 __all__ = ['PaymentQuery', 'PaymentMutation']

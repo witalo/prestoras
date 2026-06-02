@@ -179,6 +179,149 @@ def create_payment(
         )
 
 
+@strawberry.type
+class CorrectPaymentResult:
+    success: bool
+    message: str
+    payment: Optional[PaymentType] = None
+
+
+@strawberry.mutation
+def correct_payment(
+    info: Info,
+    payment_id: int,
+    new_amount: Decimal,
+    new_payment_method: Optional[str] = None,
+) -> CorrectPaymentResult:
+    """
+    Corrige el monto (y opcionalmente el método) de un pago ya registrado.
+    Revierte todas las cuotas y el préstamo antes de aplicar el nuevo monto.
+    Solo ADMIN puede usar esta acción.
+    """
+    current_user = get_current_user_from_info(info)
+    if not current_user or current_user.role != 'ADMIN':
+        return CorrectPaymentResult(success=False, message="Solo el administrador puede corregir pagos.", payment=None)
+    try:
+        with transaction.atomic():
+            try:
+                payment = Payment.objects.select_for_update().get(id=payment_id)
+            except Payment.DoesNotExist:
+                return CorrectPaymentResult(success=False, message="Pago no encontrado.", payment=None)
+
+            if payment.company_id != current_user.company_id:
+                return CorrectPaymentResult(success=False, message="Sin permiso sobre este pago.", payment=None)
+
+            if payment.status != 'COMPLETED':
+                return CorrectPaymentResult(success=False, message="Solo se pueden corregir pagos completados.", payment=None)
+
+            if new_amount <= 0:
+                return CorrectPaymentResult(success=False, message="El monto debe ser mayor a cero.", payment=None)
+
+            if new_payment_method:
+                valid_methods = ['CASH', 'CARD', 'BCP', 'YAPE', 'PLIN', 'TRANSFER']
+                if new_payment_method not in valid_methods:
+                    return CorrectPaymentResult(success=False, message=f"Método inválido: {new_payment_method}.", payment=None)
+
+            from apps.loans.models import Installment
+            from django.db.models import Sum as DSum
+
+            loan = payment.loan
+            old_amount = payment.amount
+
+            # ── 1. Calcular cuánto fue a mora vs cuotas ────────────────────────
+            total_to_installments = payment.payment_installments.aggregate(
+                t=DSum('amount_applied')
+            )['t'] or Decimal('0.00')
+            amount_to_penalty_old = old_amount - total_to_installments
+
+            # ── 2. Revertir cuotas ─────────────────────────────────────────────
+            affected_inst_ids = list(
+                payment.payment_installments.values_list('installment_id', flat=True)
+            )
+            payment.payment_installments.all().delete()
+
+            for inst_id in affected_inst_ids:
+                total = Payment.objects.filter(
+                    payment_installments__installment_id=inst_id
+                ).aggregate(t=DSum('payment_installments__amount_applied'))['t'] or Decimal('0.00')
+                # Usar SUM de PIs restantes para recalcular
+                from apps.payments.models import PaymentInstallment as PI
+                total = PI.objects.filter(
+                    installment_id=inst_id
+                ).aggregate(t=DSum('amount_applied'))['t'] or Decimal('0.00')
+                inst = Installment.objects.get(id=inst_id)
+                inst.paid_amount = total
+                inst.save(update_fields=['paid_amount'])
+                inst.update_status()
+
+            # ── 3. Revertir préstamo ───────────────────────────────────────────
+            loan.refresh_from_db()
+            loan.paid_amount -= old_amount
+            loan.penalty_applied += amount_to_penalty_old
+            loan.pending_amount = loan.total_amount - loan.paid_amount
+            loan.status = 'ACTIVE'
+            loan.save(update_fields=['paid_amount', 'pending_amount', 'penalty_applied', 'status'])
+
+            # ── 4. Actualizar el pago sin triggear Payment.save() ──────────────
+            update_fields_payment = {'amount': new_amount}
+            if new_payment_method:
+                update_fields_payment['payment_method'] = new_payment_method
+            Payment.objects.filter(id=payment_id).update(**update_fields_payment)
+            payment.refresh_from_db()
+
+            # ── 5. Aplicar nuevo monto (misma lógica que Payment.save()) ───────
+            remaining = new_amount
+
+            if loan.penalty_applied > 0 and remaining > 0:
+                to_penalty = min(remaining, loan.penalty_applied)
+                loan.penalty_applied -= to_penalty
+                loan.save(update_fields=['penalty_applied'])
+                remaining -= to_penalty
+
+            if remaining > 0:
+                installments = Installment.objects.filter(
+                    loan=loan,
+                    status__in=['PENDING', 'OVERDUE', 'PARTIALLY_PAID']
+                ).order_by('installment_number')
+
+                from apps.payments.models import PaymentInstallment as PI2
+                for inst in installments:
+                    if remaining <= 0:
+                        break
+                    need = inst.total_amount - inst.paid_amount
+                    to_apply = min(remaining, need)
+                    if to_apply <= 0:
+                        continue
+                    PI2.objects.create(payment=payment, installment=inst, amount_applied=to_apply)
+                    inst.paid_amount += to_apply
+                    inst.save(update_fields=['paid_amount'])
+                    inst.update_status()
+                    remaining -= to_apply
+
+            # ── 6. Actualizar préstamo con nuevo monto ─────────────────────────
+            loan.refresh_from_db()
+            loan.paid_amount += new_amount
+            loan.pending_amount = loan.total_amount - loan.paid_amount
+            if loan.pending_amount <= Decimal('0.00'):
+                loan.status = 'COMPLETED'
+            elif loan.end_date and loan.end_date < timezone.now().date():
+                loan.status = 'DEFAULTING'
+            else:
+                loan.status = 'ACTIVE'
+            loan.save(update_fields=['paid_amount', 'pending_amount', 'status'])
+
+            # ── 7. Clasificación del cliente ───────────────────────────────────
+            payment.client.update_classification()
+
+            return CorrectPaymentResult(
+                success=True,
+                message=f"Pago #{payment_id} corregido: S/ {old_amount} → S/ {new_amount}",
+                payment=payment
+            )
+    except Exception as e:
+        return CorrectPaymentResult(success=False, message=f"Error al corregir pago: {str(e)}", payment=None)
+
+
 @strawberry.mutation
 def update_payment(
     info: Info,
