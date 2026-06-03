@@ -18,6 +18,7 @@ _LOAN_SCALAR_FIELDS = [
     'interest_rate',
     'number_of_installments',
     'periodicity',
+    'loan_date',
     'start_date',
     'end_date',
     'total_amount',

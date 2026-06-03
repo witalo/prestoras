@@ -8,6 +8,7 @@ from .mutations import (
     update_loan,
     update_loan_penalty,
     refinance_loan,
+    admin_adjust_loan,
     delete_loan
 )
 
@@ -21,6 +22,7 @@ class LoanMutation:
     update_loan = update_loan
     update_loan_penalty = update_loan_penalty
     refinance_loan = refinance_loan
+    admin_adjust_loan = admin_adjust_loan
     delete_loan = delete_loan
 
 

@@ -177,7 +177,9 @@ class SaldosReportRowType:
     client_full_name: str = strawberry.field(name="clientFullName")
     zone_name: Optional[str] = strawberry.field(name="zoneName", default=None)
     zone_id: Optional[int] = strawberry.field(name="zoneId", default=None)
-    loan_start_date: str = strawberry.field(name="loanStartDate")
+    loan_start_date: str = strawberry.field(name="loanStartDate")           # fecha real del préstamo (loan_date || start_date)
+    loan_actual_start_date: str = strawberry.field(name="loanActualStartDate")  # fecha primera cuota
+    loan_end_date: str = strawberry.field(name="loanEndDate")                   # fecha última cuota
     initial_amount: Decimal = strawberry.field(name="initialAmount")
     interest_rate: Decimal = strawberry.field(name="interestRate")
     total_amount: Decimal = strawberry.field(name="totalAmount")

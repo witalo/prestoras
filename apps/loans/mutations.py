@@ -66,13 +66,35 @@ def _due_date(start: date, periodicity: str, index: int, custom_interval: int = 
     if periodicity == 'QUARTERLY':
         return start + relativedelta(months=index * 3)
     if periodicity == 'WEEKLY':
-        return start + timedelta(weeks=index)
+        return start + timedelta(days=7 * index)
     if periodicity == 'BIWEEKLY':
-        return start + timedelta(weeks=index * 2)
+        # Quincenal = cada 15 días (no 14)
+        return start + timedelta(days=15 * index)
     if periodicity == 'CUSTOM':
         return start + timedelta(days=custom_interval * index)
     # DAILY (default)
     return start + timedelta(days=index)
+
+
+def _start_date_from_loan_date(loan_date: date, periodicity: str) -> date:
+    """Calcula la fecha de primera cuota a partir de la fecha de otorgamiento del préstamo."""
+    if periodicity == 'DAILY':
+        return loan_date + timedelta(days=1)
+    if periodicity == 'WEEKLY':
+        return loan_date + timedelta(days=7)
+    if periodicity == 'BIWEEKLY':
+        return loan_date + timedelta(days=15)
+    if periodicity == 'MONTHLY':
+        return loan_date + relativedelta(months=1)
+    if periodicity == 'QUARTERLY':
+        return loan_date + relativedelta(months=3)
+    # CUSTOM / default: siguiente día
+    return loan_date + timedelta(days=1)
+
+
+def _end_date_from_start(start: date, periodicity: str, n: int) -> date:
+    """Calcula la fecha de la última cuota dado start, periodicidad y nro de cuotas."""
+    return _due_date(start, periodicity, n - 1)
 
 
 def generate_installments(loan: Loan):
@@ -136,6 +158,7 @@ def create_loan(
     periodicity: str,
     start_date: date,
     end_date: date,
+    loan_date: Optional[date] = None,
     loan_type_id: Optional[int] = None,
     penalty_type: Optional[str] = None,
     penalty_amount: Optional[Decimal] = None,
@@ -253,6 +276,7 @@ def create_loan(
                 interest_rate=interest_rate,
                 number_of_installments=number_of_installments,
                 periodicity=periodicity,
+                loan_date=loan_date,
                 start_date=start_date,
                 end_date=end_date,
                 penalty_type=penalty_type,
@@ -617,6 +641,145 @@ def refinance_loan(
         return RefinanceLoanResult(
             success=False,
             message=f"Error al refinanciar préstamo: {str(e)}",
+            loan=None
+        )
+
+
+@strawberry.type
+class AdminAdjustLoanResult:
+    """Resultado de ajuste administrativo de préstamo"""
+    success: bool
+    message: str
+    loan: Optional[LoanType] = None
+
+
+@strawberry.mutation
+def admin_adjust_loan(
+    info: Info,
+    loan_id: int,
+    loan_date: Optional[date] = None,
+    periodicity: Optional[str] = None,
+    reajustar_fechas: bool = False,
+    reajustar_montos: bool = False,
+    new_amount: Optional[Decimal] = None,
+) -> AdminAdjustLoanResult:
+    """
+    Ajuste administrativo de un préstamo (solo ADMIN).
+
+    Actualiza en-lugar las cuotas sin borrarlas, preservando el historial de pagos.
+
+    - reajustar_fechas: recalcula due_date de cada cuota desde loan_date + periodicidad.
+    - reajustar_montos: recalcula montos de cuotas; la última absorbe el centavo de diferencia.
+    Ambos pueden activarse de forma independiente en una misma llamada.
+    """
+    user = get_current_user_from_info(info)
+    if not user or user.role != 'ADMIN':
+        return AdminAdjustLoanResult(success=False, message="Solo el administrador puede ajustar préstamos.", loan=None)
+    try:
+        with transaction.atomic():
+            try:
+                loan = Loan.objects.select_related('client').prefetch_related('installments').get(id=loan_id)
+            except Loan.DoesNotExist:
+                return AdminAdjustLoanResult(success=False, message="Préstamo no encontrado.", loan=None)
+            if loan.company_id != user.company_id:
+                return AdminAdjustLoanResult(success=False, message="No puede ajustar préstamos de otra empresa.", loan=None)
+
+            # ── Actualizar loan_date y/o periodicidad ────────────────────────
+            if loan_date is not None:
+                loan.loan_date = loan_date
+            if periodicity is not None:
+                valid = ['DAILY', 'WEEKLY', 'BIWEEKLY', 'MONTHLY', 'QUARTERLY', 'CUSTOM']
+                if periodicity not in valid:
+                    return AdminAdjustLoanResult(success=False, message=f"Periodicidad inválida. Debe ser una de: {', '.join(valid)}", loan=None)
+                loan.periodicity = periodicity
+
+            today = timezone.now().date()
+            installments = list(loan.installments.order_by('installment_number'))
+            n = loan.number_of_installments
+
+            if len(installments) != n:
+                return AdminAdjustLoanResult(
+                    success=False,
+                    message=f"El préstamo tiene {len(installments)} cuotas registradas pero se esperaban {n}. Verifique la integridad de datos.",
+                    loan=None
+                )
+
+            # ── REAJUSTE DE FECHAS ───────────────────────────────────────────
+            if reajustar_fechas:
+                if not loan.loan_date:
+                    return AdminAdjustLoanResult(
+                        success=False,
+                        message="Debe proporcionar la fecha del préstamo (loan_date) para reajustar fechas.",
+                        loan=None
+                    )
+                new_start = _start_date_from_loan_date(loan.loan_date, loan.periodicity)
+                new_end = _end_date_from_start(new_start, loan.periodicity, n)
+
+                loan.start_date = new_start
+                loan.end_date = new_end
+
+                date_updates = []
+                for i, inst in enumerate(installments, 1):
+                    if i == n:
+                        inst.due_date = new_end
+                    else:
+                        inst.due_date = _due_date(new_start, loan.periodicity, i - 1)
+                    # Re-evaluar estado según nueva fecha (sin tocar pagos)
+                    if inst.paid_amount >= inst.total_amount:
+                        inst.status = 'PAID'
+                    elif inst.paid_amount > 0:
+                        inst.status = 'PARTIALLY_PAID'
+                    elif today > inst.due_date:
+                        inst.status = 'OVERDUE'
+                    else:
+                        inst.status = 'PENDING'
+                    date_updates.append(inst)
+
+                Installment.objects.bulk_update(date_updates, ['due_date', 'status'])
+
+            # ── REAJUSTE DE MONTOS ───────────────────────────────────────────
+            if reajustar_montos:
+                if new_amount is not None and new_amount > 0:
+                    loan.initial_amount = new_amount
+                # Recalcular total (capital + intereses)
+                loan.calculate_total_amount()
+
+                unit = Decimal('0.01')
+                total_interest = (loan.initial_amount * loan.interest_rate / Decimal('100')).quantize(unit, rounding=ROUND_HALF_UP)
+                capital_unit = (loan.initial_amount / Decimal(str(n))).quantize(unit, rounding=ROUND_HALF_UP)
+                interest_unit = (total_interest / Decimal(str(n))).quantize(unit, rounding=ROUND_HALF_UP)
+                total_unit = capital_unit + interest_unit
+
+                amount_updates = []
+                for i, inst in enumerate(installments, 1):
+                    if i == n:
+                        inst.capital_amount  = loan.initial_amount - capital_unit * (n - 1)
+                        inst.interest_amount = total_interest - interest_unit * (n - 1)
+                        inst.total_amount    = loan.total_amount - total_unit * (n - 1)
+                    else:
+                        inst.capital_amount  = capital_unit
+                        inst.interest_amount = interest_unit
+                        inst.total_amount    = total_unit
+                    amount_updates.append(inst)
+
+                Installment.objects.bulk_update(amount_updates, ['capital_amount', 'interest_amount', 'total_amount'])
+
+                # Recalcular paid_amount y pending_amount del préstamo
+                loan.paid_amount = sum(i.paid_amount for i in installments)
+                loan.pending_amount = loan.total_amount - loan.paid_amount
+
+            loan.save()
+
+            return AdminAdjustLoanResult(
+                success=True,
+                message="Préstamo ajustado correctamente.",
+                loan=loan
+            )
+
+    except Exception as e:
+        return AdminAdjustLoanResult(
+            success=False,
+            message=f"Error al ajustar préstamo: {str(e)}",
             loan=None
         )
 

@@ -62,10 +62,16 @@ class LoanQuery:
         if is_refinanced is not None:
             queryset = queryset.filter(is_refinanced=is_refinanced)
 
+        # Filtrar por loan_date si existe, fallback a start_date
+        from django.db.models import Q
         if start_date:
-            queryset = queryset.filter(start_date__gte=start_date)
+            queryset = queryset.filter(
+                Q(loan_date__gte=start_date) | Q(loan_date__isnull=True, start_date__gte=start_date)
+            )
         if end_date:
-            queryset = queryset.filter(start_date__lte=end_date)
+            queryset = queryset.filter(
+                Q(loan_date__lte=end_date) | Q(loan_date__isnull=True, start_date__lte=end_date)
+            )
 
         return list(queryset.select_related('company', 'client', 'loan_type', 'created_by', 'original_loan').prefetch_related('installments'))
     

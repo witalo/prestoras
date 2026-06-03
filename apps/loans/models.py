@@ -117,13 +117,19 @@ class Loan(models.Model):
     )
     
     # Fechas
+    loan_date = models.DateField(
+        'Fecha del Préstamo',
+        null=True,
+        blank=True,
+        help_text='Fecha real de otorgamiento del préstamo (puede diferir de start_date)'
+    )
     start_date = models.DateField(
         'Fecha de Inicio',
-        help_text='Fecha de inicio del préstamo'
+        help_text='Fecha de la primera cuota'
     )
     end_date = models.DateField(
         'Fecha de Vencimiento',
-        help_text='Fecha final de vencimiento del préstamo'
+        help_text='Fecha de la última cuota'
     )
     
     # Monto total a pagar (calculado)
