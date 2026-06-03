@@ -322,6 +322,91 @@ def correct_payment(
         return CorrectPaymentResult(success=False, message=f"Error al corregir pago: {str(e)}", payment=None)
 
 
+@strawberry.type
+class DeletePaymentResult:
+    success: bool
+    message: str
+
+
+@strawberry.mutation
+def delete_payment(info: Info, payment_id: int) -> DeletePaymentResult:
+    """
+    Elimina un pago y revierte todos sus efectos en cuotas y préstamo.
+    Borra los PaymentInstallment, restaura paid_amount/status de cada cuota,
+    y ajusta paid_amount/pending_amount/status del préstamo.
+    Solo ADMIN.
+    """
+    current_user = get_current_user_from_info(info)
+    if not current_user or current_user.role != 'ADMIN':
+        return DeletePaymentResult(success=False, message="Solo el administrador puede eliminar pagos.")
+    try:
+        with transaction.atomic():
+            try:
+                payment = Payment.objects.select_for_update().select_related('loan', 'client').get(id=payment_id)
+            except Payment.DoesNotExist:
+                return DeletePaymentResult(success=False, message="Pago no encontrado.")
+
+            if payment.company_id != current_user.company_id:
+                return DeletePaymentResult(success=False, message="Sin permiso sobre este pago.")
+
+            if payment.status != 'COMPLETED':
+                return DeletePaymentResult(success=False, message="Solo se pueden eliminar pagos completados.")
+
+            from apps.loans.models import Installment
+            from django.db.models import Sum as DSum
+            from apps.payments.models import PaymentInstallment as PI
+
+            loan  = payment.loan
+            client = payment.client
+            old_amount = payment.amount
+
+            # ── 1. Calcular cuánto fue a mora vs cuotas ────────────────────────
+            total_to_installments = payment.payment_installments.aggregate(
+                t=DSum('amount_applied')
+            )['t'] or Decimal('0.00')
+            amount_to_penalty = old_amount - total_to_installments
+
+            # ── 2. Revertir cuotas afectadas (borra PaymentInstallment) ────────
+            affected_inst_ids = list(
+                payment.payment_installments.values_list('installment_id', flat=True)
+            )
+            payment.payment_installments.all().delete()
+
+            for inst_id in affected_inst_ids:
+                # Recalcular paid_amount con los PI que quedan (de otros pagos)
+                remaining = PI.objects.filter(
+                    installment_id=inst_id
+                ).aggregate(t=DSum('amount_applied'))['t'] or Decimal('0.00')
+                inst = Installment.objects.get(id=inst_id)
+                inst.paid_amount = remaining
+                inst.save(update_fields=['paid_amount'])
+                inst.update_status()
+
+            # ── 3. Revertir préstamo ───────────────────────────────────────────
+            loan.refresh_from_db()
+            loan.paid_amount    = max(Decimal('0.00'), loan.paid_amount - old_amount)
+            loan.penalty_applied += amount_to_penalty
+            loan.pending_amount  = loan.total_amount - loan.paid_amount
+            if loan.pending_amount <= Decimal('0.00'):
+                loan.status = 'COMPLETED'
+            elif loan.end_date and loan.end_date < timezone.now().date():
+                loan.status = 'DEFAULTING'
+            else:
+                loan.status = 'ACTIVE'
+            loan.save(update_fields=['paid_amount', 'pending_amount', 'penalty_applied', 'status'])
+
+            # ── 4. Reclasificar cliente ────────────────────────────────────────
+            client.update_classification()
+
+            # ── 5. Eliminar el pago (limpia el rastro) ─────────────────────────
+            payment.delete()
+
+            return DeletePaymentResult(success=True, message=f"Pago #{payment_id} eliminado correctamente.")
+
+    except Exception as e:
+        return DeletePaymentResult(success=False, message=f"Error al eliminar pago: {str(e)}")
+
+
 @strawberry.mutation
 def update_payment(
     info: Info,
