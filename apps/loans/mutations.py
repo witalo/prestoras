@@ -59,8 +59,24 @@ class DeleteLoanResult:
     message: str
 
 
+def _add_business_days_daily(start: date, n: int) -> date:
+    """Suma n días hábiles (lun–sáb) a start. Domingos se saltan.
+    Para n=0 devuelve start sin modificar."""
+    if n <= 0:
+        return start
+    d = start
+    added = 0
+    while added < n:
+        d += timedelta(days=1)
+        if d.weekday() != 6:   # 6 = domingo
+            added += 1
+    return d
+
+
 def _due_date(start: date, periodicity: str, index: int, custom_interval: int = 1) -> date:
-    """Fecha de vencimiento para la cuota en posición `index` (0-based desde start)."""
+    """Fecha de vencimiento para la cuota en posición `index` (0-based desde start).
+    DAILY: los domingos no se cuentan (préstamos sin cobro los domingos).
+    """
     if periodicity == 'MONTHLY':
         return start + relativedelta(months=index)
     if periodicity == 'QUARTERLY':
@@ -72,14 +88,19 @@ def _due_date(start: date, periodicity: str, index: int, custom_interval: int = 
         return start + timedelta(days=15 * index)
     if periodicity == 'CUSTOM':
         return start + timedelta(days=custom_interval * index)
-    # DAILY (default)
-    return start + timedelta(days=index)
+    # DAILY: skip domingos
+    return _add_business_days_daily(start, index)
 
 
 def _start_date_from_loan_date(loan_date: date, periodicity: str) -> date:
-    """Calcula la fecha de primera cuota a partir de la fecha de otorgamiento del préstamo."""
+    """Calcula la fecha de primera cuota a partir de la fecha de otorgamiento del préstamo.
+    DAILY: si el día siguiente cae domingo, avanza al lunes.
+    """
     if periodicity == 'DAILY':
-        return loan_date + timedelta(days=1)
+        d = loan_date + timedelta(days=1)
+        if d.weekday() == 6:   # domingo → lunes
+            d += timedelta(days=1)
+        return d
     if periodicity == 'WEEKLY':
         return loan_date + timedelta(days=7)
     if periodicity == 'BIWEEKLY':
@@ -95,6 +116,14 @@ def _start_date_from_loan_date(loan_date: date, periodicity: str) -> date:
 def _end_date_from_start(start: date, periodicity: str, n: int) -> date:
     """Calcula la fecha de la última cuota dado start, periodicidad y nro de cuotas."""
     return _due_date(start, periodicity, n - 1)
+
+
+def _guard_daily_sunday(periodicity: str, d: date) -> date:
+    """Para préstamos DAILY: si la fecha cae domingo, avanza al lunes.
+    Para cualquier otro tipo devuelve la fecha sin modificar."""
+    if periodicity == 'DAILY' and d.weekday() == 6:
+        return d + timedelta(days=1)
+    return d
 
 
 def generate_installments(loan: Loan):
@@ -158,7 +187,7 @@ def create_loan(
     periodicity: str,
     start_date: date,
     end_date: date,
-    loan_date: Optional[date] = None,
+    loan_date: date,
     loan_type_id: Optional[int] = None,
     penalty_type: Optional[str] = None,
     penalty_amount: Optional[Decimal] = None,
@@ -235,6 +264,10 @@ def create_loan(
                     loan=None
                 )
             
+            # DAILY: corregir domingo → lunes antes de cualquier validación
+            start_date = _guard_daily_sunday(periodicity, start_date)
+            end_date   = _guard_daily_sunday(periodicity, end_date)
+
             # Validar fechas
             if start_date >= end_date:
                 return CreateLoanResult(
@@ -538,6 +571,7 @@ def refinance_loan(
     periodicity: str,
     start_date: date,
     end_date: date,
+    loan_date: date,
     observations: Optional[str] = None
 ) -> RefinanceLoanResult:
     """
@@ -593,6 +627,10 @@ def refinance_loan(
                     loan=None
                 )
             
+            # DAILY: corregir domingo → lunes
+            start_date = _guard_daily_sunday(periodicity, start_date)
+            end_date   = _guard_daily_sunday(periodicity, end_date)
+
             # Crear nuevo préstamo refinanciado
             new_loan = Loan(
                 company_id=company_id,
@@ -601,6 +639,7 @@ def refinance_loan(
                 interest_rate=interest_rate,
                 number_of_installments=number_of_installments,
                 periodicity=periodicity,
+                loan_date=loan_date,
                 start_date=start_date,
                 end_date=end_date,
                 original_loan=original_loan,
@@ -713,7 +752,15 @@ def admin_adjust_loan(
                         loan=None
                     )
                 new_start = _start_date_from_loan_date(loan.loan_date, loan.periodicity)
-                new_end = _end_date_from_start(new_start, loan.periodicity, n)
+
+                # CUSTOM: mantener end_date existente (el intervalo lo define start↔end)
+                # Los demás: recalcular end_date desde new_start + (n-1) periodos
+                if loan.periodicity == 'CUSTOM':
+                    new_end = loan.end_date  # respetar el vencimiento original
+                    custom_iv = max(1, int((new_end - new_start).days / n)) if n > 0 else 1
+                else:
+                    new_end = _end_date_from_start(new_start, loan.periodicity, n)
+                    custom_iv = 1
 
                 loan.start_date = new_start
                 loan.end_date = new_end
@@ -723,7 +770,7 @@ def admin_adjust_loan(
                     if i == n:
                         inst.due_date = new_end
                     else:
-                        inst.due_date = _due_date(new_start, loan.periodicity, i - 1)
+                        inst.due_date = _due_date(new_start, loan.periodicity, i - 1, custom_iv)
                     # Re-evaluar estado según nueva fecha (sin tocar pagos)
                     if inst.paid_amount >= inst.total_amount:
                         inst.status = 'PAID'
