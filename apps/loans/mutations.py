@@ -268,13 +268,21 @@ def create_loan(
             start_date = _guard_daily_sunday(periodicity, start_date)
             end_date   = _guard_daily_sunday(periodicity, end_date)
 
-            # Validar fechas
-            if start_date >= end_date:
-                return CreateLoanResult(
-                    success=False,
-                    message="La fecha de inicio debe ser anterior a la fecha de vencimiento",
-                    loan=None
-                )
+            # Validar fechas (1 cuota: inicio == fin es válido)
+            if number_of_installments == 1:
+                if start_date > end_date:
+                    return CreateLoanResult(
+                        success=False,
+                        message="La fecha de inicio no puede ser posterior a la fecha de vencimiento",
+                        loan=None
+                    )
+            else:
+                if start_date >= end_date:
+                    return CreateLoanResult(
+                        success=False,
+                        message="La fecha de inicio debe ser anterior a la fecha de vencimiento",
+                        loan=None
+                    )
             
             # Validar mora
             if penalty_type:
@@ -412,12 +420,21 @@ def update_loan(
                 loan.start_date = start_date
             
             if end_date is not None:
-                if loan.start_date >= end_date:
-                    return UpdateLoanResult(
-                        success=False,
-                        message="La fecha de inicio debe ser anterior a la fecha de vencimiento",
-                        loan=None
-                    )
+                effective_installments = number_of_installments if number_of_installments is not None else loan.number_of_installments
+                if effective_installments == 1:
+                    if loan.start_date > end_date:
+                        return UpdateLoanResult(
+                            success=False,
+                            message="La fecha de inicio no puede ser posterior a la fecha de vencimiento",
+                            loan=None
+                        )
+                else:
+                    if loan.start_date >= end_date:
+                        return UpdateLoanResult(
+                            success=False,
+                            message="La fecha de inicio debe ser anterior a la fecha de vencimiento",
+                            loan=None
+                        )
                 loan.end_date = end_date
             
             if number_of_installments is not None:
