@@ -11,6 +11,7 @@ from html import escape
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
+from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.decorators.http import require_GET
 from django.views.decorators.csrf import csrf_exempt
 from reportlab.lib import colors
@@ -144,6 +145,7 @@ def _add_footer_client(canvas, doc, company_name, report_date, title_label, logo
     canvas.restoreState()
 
 
+@xframe_options_exempt
 @csrf_exempt
 @require_GET
 def clientes_puntuales_pdf(request):
@@ -285,6 +287,7 @@ def clientes_puntuales_pdf(request):
     return response
 
 
+@xframe_options_exempt
 @csrf_exempt
 @require_GET
 def clientes_activos_pdf(request):

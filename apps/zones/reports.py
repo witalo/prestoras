@@ -10,6 +10,7 @@ from html import escape
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.utils import timezone
+from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.decorators.http import require_GET
 from django.views.decorators.csrf import csrf_exempt
 from reportlab.lib import colors
@@ -42,6 +43,7 @@ def _get_logo_path(company):
     return None
 
 
+@xframe_options_exempt
 @csrf_exempt
 @require_GET
 def zone_loans_pdf(request, zone_id: int):
@@ -326,6 +328,7 @@ def zone_loans_pdf(request, zone_id: int):
     return response
 
 
+@xframe_options_exempt
 @csrf_exempt
 @require_GET
 def zone_client_pdf(request, zone_id: int):
