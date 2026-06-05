@@ -53,6 +53,12 @@ class PaymentType:
             return None
 
     @strawberry.field
+    def penalty_paid(self) -> Decimal:
+        from django.db.models import Sum
+        total = self.payment_installments.aggregate(t=Sum('amount_applied'))['t'] or Decimal('0.00')
+        return max(Decimal('0.00'), self.amount - total)
+
+    @strawberry.field
     def collector_id(self) -> Optional[int]:
         return self.collector_id if self.collector_id else None
 

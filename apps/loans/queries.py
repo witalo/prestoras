@@ -73,7 +73,25 @@ class LoanQuery:
                 Q(loan_date__lte=end_date) | Q(loan_date__isnull=True, start_date__lte=end_date)
             )
 
-        return list(queryset.select_related('company', 'client', 'loan_type', 'created_by', 'original_loan').prefetch_related('installments'))
+        from django.db.models import OuterRef, Subquery, Sum, DecimalField
+        from django.db.models.functions import Coalesce
+        from decimal import Decimal as D
+        from apps.payments.models import Payment, PaymentInstallment
+
+        pmt_subq = (
+            Payment.objects.filter(loan_id=OuterRef('pk'), status='COMPLETED')
+            .values('loan_id').annotate(s=Sum('amount')).values('s')
+        )
+        inst_subq = (
+            PaymentInstallment.objects.filter(payment__loan_id=OuterRef('pk'), payment__status='COMPLETED')
+            .values('payment__loan_id').annotate(s=Sum('amount_applied')).values('s')
+        )
+        df = DecimalField(max_digits=15, decimal_places=2)
+        queryset = queryset.annotate(
+            _pmt_total=Coalesce(Subquery(pmt_subq, output_field=df), D('0.00'), output_field=df),
+            _inst_total=Coalesce(Subquery(inst_subq, output_field=df), D('0.00'), output_field=df),
+        )
+        return list(queryset.select_related('company', 'client', 'loan_type', 'created_by', 'original_loan').prefetch_related('installments', 'refinancings'))
     
     @strawberry.field
     def loan(self, info: Info, loan_id: int) -> Optional[LoanType]:

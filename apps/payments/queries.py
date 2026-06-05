@@ -53,7 +53,7 @@ class PaymentQuery:
                     return []
             except Loan.DoesNotExist:
                 return []
-        return list(Payment.objects.filter(loan_id=loan_id).order_by('-payment_date'))
+        return list(Payment.objects.filter(loan_id=loan_id).prefetch_related('payment_installments').order_by('-payment_date'))
     
     @strawberry.field
     def collector_payments(
@@ -115,7 +115,7 @@ class PaymentQuery:
         queryset = Payment.objects.filter(
             company_id=company_id,
             status='COMPLETED'
-        ).select_related('loan', 'client', 'collector')
+        ).select_related('loan', 'client', 'collector').prefetch_related('payment_installments')
         user = get_current_user_from_info(info)
         if user and user.role == 'COLLECTOR':
             client_ids = list(user.assigned_clients.values_list('id', flat=True))

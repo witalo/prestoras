@@ -54,6 +54,29 @@ class LoanType:
         return list(self.installments.all().order_by('installment_number'))
 
     @strawberry.field
+    def refinanced_to_id(self) -> Optional[int]:
+        # original_loan → related_name='refinancings' (FK, puede haber varios en teoría)
+        try:
+            r = self.refinancings.first()
+            return r.new_loan_id if r else None
+        except Exception:
+            return None
+
+    @strawberry.field
+    def penalty_total_paid(self) -> Decimal:
+        if hasattr(self, '_pmt_total'):
+            pmt = self._pmt_total or Decimal('0.00')
+            inst = self._inst_total or Decimal('0.00')
+            return max(Decimal('0.00'), pmt - inst)
+        from django.db.models import Sum as DSum
+        from apps.payments.models import PaymentInstallment
+        total_pmts = self.payments.filter(status='COMPLETED').aggregate(t=DSum('amount'))['t'] or Decimal('0.00')
+        total_inst = PaymentInstallment.objects.filter(
+            payment__loan=self, payment__status='COMPLETED'
+        ).aggregate(t=DSum('amount_applied'))['t'] or Decimal('0.00')
+        return max(Decimal('0.00'), total_pmts - total_inst)
+
+    @strawberry.field
     def penalty_applied(self) -> Decimal:
         if self.status in ('COMPLETED', 'CANCELLED', 'REFINANCED'):
             return Decimal('0.00')
