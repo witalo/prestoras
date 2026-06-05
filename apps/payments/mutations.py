@@ -132,7 +132,14 @@ def create_payment(
                     payment=None
                 )
             
-            # Monto no puede exceder saldo pendiente + mora
+            paid_dt = timezone.make_aware(datetime.combine(payment_date, timezone.localtime().time()))
+            first_payment = None
+
+            # Actualizar mora al valor actual ANTES de validar y aplicar el pago,
+            # para que el máximo permitido use el valor de hoy (no uno obsoleto).
+            loan.calculate_penalty(save=True)
+
+            # Monto no puede exceder saldo pendiente + mora (ya recalculada)
             max_allowed = loan.pending_amount + loan.penalty_applied
             if amount > max_allowed:
                 return CreatePaymentResult(
@@ -140,9 +147,6 @@ def create_payment(
                     message=f"El monto del pago ({amount}) excede el saldo pendiente más mora ({max_allowed})",
                     payment=None
                 )
-            
-            paid_dt = timezone.make_aware(datetime.combine(payment_date, timezone.localtime().time()))
-            first_payment = None
 
             # Crear un Payment por cada método — así los reportes/filtros son exactos
             for method_input in payment_methods:
@@ -160,10 +164,6 @@ def create_payment(
                 p.save()
                 if first_payment is None:
                     first_payment = p
-
-            # Recalcular mora después del pago
-            loan.refresh_from_db()
-            loan.calculate_penalty()
 
             return CreatePaymentResult(
                 success=True,
@@ -254,13 +254,14 @@ def correct_payment(
                 inst.save(update_fields=['paid_amount'])
                 inst.update_status()
 
-            # ── 3. Revertir préstamo ───────────────────────────────────────────
+            # ── 3. Revertir préstamo — solo restamos la parte de cuotas ──────────
             loan.refresh_from_db()
-            loan.paid_amount -= old_amount
+            loan.paid_amount -= total_to_installments
             loan.penalty_applied += amount_to_penalty_old
+            loan.penalty_override = False  # la fórmula vuelve a tomar control
             loan.pending_amount = loan.total_amount - loan.paid_amount
             loan.status = 'ACTIVE'
-            loan.save(update_fields=['paid_amount', 'pending_amount', 'penalty_applied', 'status'])
+            loan.save(update_fields=['paid_amount', 'pending_amount', 'penalty_applied', 'penalty_override', 'status'])
 
             # ── 4. Actualizar el pago sin triggear Payment.save() ──────────────
             update_fields_payment = {'amount': new_amount}
@@ -271,12 +272,13 @@ def correct_payment(
 
             # ── 5. Aplicar nuevo monto (misma lógica que Payment.save()) ───────
             remaining = new_amount
+            to_penalty_new = Decimal('0.00')
 
             if loan.penalty_applied > 0 and remaining > 0:
-                to_penalty = min(remaining, loan.penalty_applied)
-                loan.penalty_applied -= to_penalty
+                to_penalty_new = min(remaining, loan.penalty_applied)
+                loan.penalty_applied -= to_penalty_new
                 loan.save(update_fields=['penalty_applied'])
-                remaining -= to_penalty
+                remaining -= to_penalty_new
 
             if remaining > 0:
                 installments = Installment.objects.filter(
@@ -298,9 +300,9 @@ def correct_payment(
                     inst.update_status()
                     remaining -= to_apply
 
-            # ── 6. Actualizar préstamo con nuevo monto ─────────────────────────
+            # ── 6. Actualizar préstamo — solo la parte de cuotas suma a paid_amount
             loan.refresh_from_db()
-            loan.paid_amount += new_amount
+            loan.paid_amount += (new_amount - to_penalty_new)
             loan.pending_amount = loan.total_amount - loan.paid_amount
             if loan.pending_amount <= Decimal('0.00'):
                 loan.status = 'COMPLETED'
@@ -382,10 +384,11 @@ def delete_payment(info: Info, payment_id: int) -> DeletePaymentResult:
                 inst.save(update_fields=['paid_amount'])
                 inst.update_status()
 
-            # ── 3. Revertir préstamo ───────────────────────────────────────────
+            # ── 3. Revertir préstamo — solo restamos la parte de cuotas ──────────
             loan.refresh_from_db()
-            loan.paid_amount    = max(Decimal('0.00'), loan.paid_amount - old_amount)
+            loan.paid_amount     = max(Decimal('0.00'), loan.paid_amount - total_to_installments)
             loan.penalty_applied += amount_to_penalty
+            loan.penalty_override = False  # la fórmula vuelve a tomar control
             loan.pending_amount  = loan.total_amount - loan.paid_amount
             if loan.pending_amount <= Decimal('0.00'):
                 loan.status = 'COMPLETED'
@@ -393,7 +396,7 @@ def delete_payment(info: Info, payment_id: int) -> DeletePaymentResult:
                 loan.status = 'DEFAULTING'
             else:
                 loan.status = 'ACTIVE'
-            loan.save(update_fields=['paid_amount', 'pending_amount', 'penalty_applied', 'status'])
+            loan.save(update_fields=['paid_amount', 'pending_amount', 'penalty_applied', 'penalty_override', 'status'])
 
             # ── 4. Reclasificar cliente ────────────────────────────────────────
             client.update_classification()

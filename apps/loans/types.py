@@ -4,6 +4,7 @@ Tipos GraphQL para Loans usando Strawberry
 import strawberry
 from typing import Optional, List
 from datetime import date, datetime
+from decimal import Decimal
 
 from .models import Loan, Installment, Refinancing
 from apps.clients.types import ClientType
@@ -27,7 +28,6 @@ _LOAN_SCALAR_FIELDS = [
     'penalty_type',
     'penalty_amount',
     'penalty_percentage',
-    'penalty_applied',
     'status',
     'observations',
     'is_refinanced',
@@ -52,6 +52,16 @@ class LoanType:
     @strawberry.field
     def installments(self) -> List['InstallmentType']:
         return list(self.installments.all().order_by('installment_number'))
+
+    @strawberry.field
+    def penalty_applied(self) -> Decimal:
+        if self.status in ('COMPLETED', 'CANCELLED', 'REFINANCED'):
+            return Decimal('0.00')
+        # Si el admin ajustó manualmente la mora, devolver el valor guardado.
+        if self.penalty_override:
+            return self.penalty_applied
+        # Caso normal: calcular fresco desde la fórmula.
+        return self.calculate_penalty(save=False)
 
     # IDs de FK — útiles para el frontend sin tener que cargar el objeto completo
     @strawberry.field

@@ -46,6 +46,13 @@ class PaymentType:
         return self.loan_id
 
     @strawberry.field
+    def loan_initial_amount(self) -> Optional[Decimal]:
+        try:
+            return self.loan.initial_amount if self.loan_id else None
+        except Exception:
+            return None
+
+    @strawberry.field
     def collector_id(self) -> Optional[int]:
         return self.collector_id if self.collector_id else None
 

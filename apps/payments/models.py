@@ -132,40 +132,40 @@ class Payment(models.Model):
     def save(self, *args, **kwargs):
         """
         Guarda el pago y actualiza el estado del préstamo y cuotas.
-        El pago se aplica primero a la mora (si existe) y luego a las cuotas
-        pendientes en orden. Soporta sobrepago: si el cliente paga más que las
-        cuotas seleccionadas, el excedente se aplica a las siguientes cuotas.
+        1. La mora se paga primero (reduce penalty_applied) pero NO suma a paid_amount.
+        2. El resto va a cuotas y SÍ suma a paid_amount.
+        Así paid_amount refleja solo lo pagado en capital+interés, separado de la mora.
         """
         super().save(*args, **kwargs)
-        
-        # Actualizar préstamo solo si está completado
+
         if self.status == 'COMPLETED':
             loan = self.loan
             remaining = self.amount
-            
-            # 1) Aplicar primero a la mora (hasta reducirla a 0)
+            amount_to_penalty = Decimal('0.00')
+
+            # 1) Aplicar primero a mora — reduce penalty_applied, NO cuenta en paid_amount
             if loan.penalty_applied > 0 and remaining > 0:
                 amount_to_penalty = min(remaining, loan.penalty_applied)
                 loan.penalty_applied -= amount_to_penalty
                 loan.save(update_fields=['penalty_applied'])
                 remaining -= amount_to_penalty
-            
-            # 2) Aplicar el resto a cuotas y crear registros PaymentInstallment
+
+            # 2) El resto va a cuotas
             if remaining > 0:
                 self._update_installments(remaining)
-            
-            # 3) Actualizar montos del préstamo
+
+            # 3) Solo el monto de cuotas suma a paid_amount
             loan.refresh_from_db()
-            loan.paid_amount += self.amount
+            loan.paid_amount += (self.amount - amount_to_penalty)
             loan.pending_amount = loan.total_amount - loan.paid_amount
-            
-            if loan.pending_amount <= 0:
+
+            if loan.pending_amount <= Decimal('0.00'):
                 loan.status = 'COMPLETED'
             elif loan.end_date < timezone.now().date():
                 loan.status = 'DEFAULTING'
-            
+
             loan.save(update_fields=['paid_amount', 'pending_amount', 'status'])
-            
+
             # 4) Clasificación del cliente
             self.client.update_classification()
     

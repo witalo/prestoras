@@ -195,7 +195,16 @@ class Loan(models.Model):
         default=Decimal('0.00'),
         help_text='Mora total aplicada hasta el momento'
     )
-    
+
+    # Indica si penalty_applied fue ajustado manualmente por un admin.
+    # Si True, el resolver muestra el valor guardado en lugar de recalcular.
+    # Se resetea a False cuando se procesa un pago (calculate_penalty save=True).
+    penalty_override = models.BooleanField(
+        'Mora Ajustada Manualmente',
+        default=False,
+        help_text='True cuando un admin ajustó la mora manualmente'
+    )
+
     # Estado del préstamo
     status = models.CharField(
         'Estado',
@@ -250,35 +259,42 @@ class Loan(models.Model):
         self.pending_amount = self.total_amount - self.paid_amount
         return self.total_amount
     
-    def calculate_penalty(self):
+    def calculate_penalty(self, save=True):
         """
-        Calcula la mora aplicada si el préstamo está vencido.
-        La mora solo se aplica si se supera la fecha final del crédito.
+        Calcula la mora del préstamo si está vencido (today > end_date).
+        Con save=False devuelve el valor sin persistirlo (útil para mostrar en consultas).
+        Con save=True (por defecto) persiste el valor en BD antes de aplicar un pago.
+
+        Si penalty_override=True (admin ajustó manualmente), se respeta el valor
+        guardado y NO se recalcula desde la fórmula. El override se mantiene activo
+        hasta que el próximo pago lo consuma completamente.
         """
-        if self.status in ['COMPLETED', 'CANCELLED']:
+        if self.status in ['COMPLETED', 'CANCELLED', 'REFINANCED']:
             return Decimal('0.00')
-        
+
         today = timezone.now().date()
-        
-        # Solo aplicar mora si se supera la fecha final
+
         if today <= self.end_date:
             return Decimal('0.00')
-        
+
+        # Si el admin ajustó la mora manualmente, respetar ese valor
+        if self.penalty_override:
+            return self.penalty_applied
+
         days_overdue = (today - self.end_date).days
-        
+
         if self.penalty_type == 'FIXED' and self.penalty_amount:
-            # Mora fija por día
             penalty = self.penalty_amount * days_overdue
         elif self.penalty_type == 'PERCENTAGE' and self.penalty_percentage:
-            # Mora porcentual por día sobre el saldo pendiente
             daily_penalty = (self.pending_amount * self.penalty_percentage) / Decimal('100')
             penalty = daily_penalty * days_overdue
         else:
             penalty = Decimal('0.00')
-        
-        self.penalty_applied = penalty
-        self.save(update_fields=['penalty_applied'])
-        
+
+        if save:
+            self.penalty_applied = penalty
+            self.save(update_fields=['penalty_applied'])
+
         return penalty
     
     def save(self, *args, **kwargs):

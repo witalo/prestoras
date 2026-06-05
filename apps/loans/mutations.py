@@ -478,9 +478,22 @@ def update_loan(
                         loan=None
                     )
                 loan.status = status
-            
+
+                if status == 'CANCELLED':
+                    # Limpiar mora — un préstamo cancelado no acumula mora
+                    loan.penalty_applied = Decimal('0.00')
+                    loan.penalty_override = False
+                    # Marcar cuotas pendientes como canceladas
+                    loan.installments.filter(
+                        status__in=['PENDING', 'OVERDUE', 'PARTIALLY_PAID']
+                    ).update(status='CANCELLED')
+
             loan.save()
-            
+
+            # Actualizar clasificación del cliente si cambió el estado
+            if status in ('CANCELLED', 'COMPLETED', 'ACTIVE', 'DEFAULTING'):
+                loan.client.update_classification()
+
             return UpdateLoanResult(
                 success=True,
                 message="Préstamo actualizado exitosamente",
@@ -548,18 +561,19 @@ def update_loan_penalty(
                 reason=reason_text
             )
             
-            # Actualizar mora del préstamo
+            # Actualizar mora del préstamo y marcar como ajuste manual
             loan.penalty_applied = penalty_applied
-            
+            loan.penalty_override = True  # el resolver usará este valor en lugar de recalcular
+
             if penalty_type is not None:
                 loan.penalty_type = penalty_type
-            
+
             if penalty_amount is not None:
                 loan.penalty_amount = penalty_amount
-            
+
             if penalty_percentage is not None:
                 loan.penalty_percentage = penalty_percentage
-            
+
             loan.save()
             
             return UpdateLoanPenaltyResult(
@@ -635,12 +649,16 @@ def refinance_loan(
                     message="El préstamo original ya está pagado completamente",
                     loan=None
                 )
-            
-            # Validar que el capital refinanciado no exceda el saldo pendiente
-            if capital_amount > original_loan.pending_amount:
+
+            # Calcular mora actual (respetando override si existe)
+            current_penalty = original_loan.calculate_penalty(save=False)
+            max_capital = original_loan.pending_amount + current_penalty
+
+            # El capital puede incluir la mora (si el admin decide incorporarla al nuevo préstamo)
+            if capital_amount > max_capital:
                 return RefinanceLoanResult(
                     success=False,
-                    message=f"El capital refinanciado ({capital_amount}) no puede exceder el saldo pendiente ({original_loan.pending_amount})",
+                    message=f"El capital refinanciado ({capital_amount}) no puede exceder saldo + mora ({max_capital})",
                     loan=None
                 )
             
@@ -671,8 +689,10 @@ def refinance_loan(
             # Generar cuotas del nuevo préstamo
             generate_installments(new_loan)
             
-            # Marcar préstamo original como refinanciado
+            # Marcar préstamo original como refinanciado y limpiar mora
             original_loan.status = 'REFINANCED'
+            original_loan.penalty_applied = Decimal('0.00')
+            original_loan.penalty_override = False
             original_loan.save()
             
             # Registrar refinanciamiento
@@ -831,6 +851,11 @@ def admin_adjust_loan(
                 # Recalcular paid_amount y pending_amount del préstamo
                 loan.paid_amount = sum(i.paid_amount for i in installments)
                 loan.pending_amount = loan.total_amount - loan.paid_amount
+
+            # Si se cambiaron fechas o montos, la mora debe recalcularse desde
+            # la fórmula con los nuevos valores — el override manual ya no aplica.
+            if reajustar_fechas or reajustar_montos:
+                loan.penalty_override = False
 
             loan.save()
 
