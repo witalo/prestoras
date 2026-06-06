@@ -5,7 +5,7 @@ Incluye registro de pagos con múltiples métodos de pago
 import strawberry
 from typing import Optional, List
 from decimal import Decimal
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from django.db import transaction
 from django.utils import timezone
 
@@ -147,6 +147,23 @@ def create_payment(
                     message=f"El monto del pago ({amount}) excede el saldo pendiente más mora ({max_allowed})",
                     payment=None
                 )
+
+            # Anti-duplicación: rechaza si ya existe un pago del mismo préstamo,
+            # método y monto registrado en los últimos 3 segundos
+            cutoff = timezone.now() - timedelta(seconds=3)
+            for method_input in payment_methods:
+                if Payment.objects.filter(
+                    loan=loan,
+                    payment_method=method_input.method,
+                    amount=method_input.amount,
+                    payment_date__gte=cutoff,
+                    status='COMPLETED'
+                ).exists():
+                    return CreatePaymentResult(
+                        success=False,
+                        message="Pago duplicado detectado. Espera unos segundos antes de reintentar.",
+                        payment=None
+                    )
 
             # Crear un Payment por cada método — así los reportes/filtros son exactos
             for method_input in payment_methods:
