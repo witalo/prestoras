@@ -286,6 +286,60 @@ def update_user(
 
 
 @strawberry.mutation
+def update_profile(
+    info,
+    first_name: Optional[str] = None,
+    last_name:  Optional[str] = None,
+    email:      Optional[str] = None,
+    phone:      Optional[str] = None,
+) -> UserOperationResult:
+    """El usuario autenticado actualiza su propio perfil (nombre, email, teléfono)."""
+    current = _get_current_user(info)
+    if not current or not current.is_authenticated:
+        return UserOperationResult(success=False, message="Debes iniciar sesión.", user=None)
+    try:
+        if first_name is not None:
+            current.first_name = first_name.strip()
+        if last_name is not None:
+            current.last_name = last_name.strip()
+        if email is not None:
+            email = email.strip().lower()
+            if User.objects.exclude(pk=current.pk).filter(email=email).exists():
+                return UserOperationResult(success=False, message="Este correo ya está en uso.", user=None)
+            current.email = email
+        if phone is not None:
+            current.phone = phone.strip() or None
+        current.save()
+        return UserOperationResult(success=True, message="Perfil actualizado correctamente.", user=current)
+    except Exception as e:
+        return UserOperationResult(success=False, message=str(e), user=None)
+
+
+@strawberry.mutation
+def change_password(
+    info,
+    current_password: str,
+    new_password:     str,
+) -> UserOperationResult:
+    """El usuario autenticado cambia su propia contraseña (requiere contraseña actual)."""
+    current = _get_current_user(info)
+    if not current or not current.is_authenticated:
+        return UserOperationResult(success=False, message="Debes iniciar sesión.", user=None)
+    if not current.check_password(current_password):
+        return UserOperationResult(success=False, message="La contraseña actual es incorrecta.", user=None)
+    if len(new_password) < 4:
+        return UserOperationResult(success=False, message="La nueva contraseña debe tener al menos 4 caracteres.", user=None)
+    if new_password == current_password:
+        return UserOperationResult(success=False, message="La nueva contraseña debe ser diferente a la actual.", user=None)
+    try:
+        current.set_password(new_password)
+        current.save()
+        return UserOperationResult(success=True, message="Contraseña cambiada correctamente.", user=None)
+    except Exception as e:
+        return UserOperationResult(success=False, message=str(e), user=None)
+
+
+@strawberry.mutation
 def admin_set_password(
     info,
     user_id: int,

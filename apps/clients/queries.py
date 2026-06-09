@@ -354,12 +354,13 @@ class ClientQuery:
         # Préstamos que tienen al menos una cuota vencida/pendiente hasta target_date
         # Usamos loan.pending_amount (exacto) en vez de sumar cuota por cuota (acumula errores de redondeo)
         from apps.loans.models import Loan as LoanModel
+        from decimal import Decimal as D
         loans_with_due = LoanModel.objects.filter(
             id__in=loan_ids,
             pending_amount__gt=0,
             installments__due_date__lte=target_date,
             installments__status__in=['PENDING', 'OVERDUE', 'PARTIALLY_PAID'],
-        ).select_related('client').distinct()
+        ).select_related('client').prefetch_related('installments').distinct()
 
         if not loans_with_due:
             logger.info("collection_route_by_date: sin cuotas con saldo company_id=%s date=%s",
@@ -388,12 +389,35 @@ class ClientQuery:
         result = []
         for loan in loans_with_due:
             client = clients_by_id.get(loan.client_id) or loan.client
+            # Cuota actual: la primera con saldo pendiente y vencida hasta target_date
+            due_installments = sorted(
+                [i for i in loan.installments.all()
+                 if i.due_date <= target_date and i.status in ('PENDING', 'OVERDUE', 'PARTIALLY_PAID')],
+                key=lambda x: x.installment_number,
+            )
+            current_inst_num = due_installments[0].installment_number if due_installments else None
+            loan_date_str = None
+            try:
+                ld = loan.loan_date or loan.start_date
+                loan_date_str = ld.isoformat() if ld else None
+            except Exception:
+                pass
             result.append(CollectionRouteItemType(
                 client=client,
                 amount_to_collect=loan.pending_amount,
                 paid=(loan.id in paid_loan_ids),
                 loan_id=loan.id,
                 loan_status=loan.status,
+                loan_initial_amount=loan.initial_amount,
+                loan_total_amount=loan.total_amount,
+                loan_date=loan_date_str,
+                penalty_applied=loan.penalty_applied or D('0.00'),
+                penalty_type=loan.penalty_type,
+                penalty_amount=loan.penalty_amount,
+                penalty_percentage=loan.penalty_percentage,
+                pending_amount=loan.pending_amount,
+                installment_number=current_inst_num,
+                total_installments=loan.number_of_installments,
             ))
 
         logger.info("collection_route_by_date: OK company_id=%s date=%s items=%s",

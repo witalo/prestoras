@@ -53,6 +53,27 @@ class PaymentType:
             return None
 
     @strawberry.field
+    def loan_total_amount(self) -> Optional[Decimal]:
+        try:
+            return self.loan.total_amount if self.loan_id else None
+        except Exception:
+            return None
+
+    @strawberry.field
+    def loan_status(self) -> Optional[str]:
+        try:
+            return self.loan.status if self.loan_id else None
+        except Exception:
+            return None
+
+    @strawberry.field
+    def loan_pending_amount(self) -> Optional[Decimal]:
+        try:
+            return self.loan.pending_amount if self.loan_id else None
+        except Exception:
+            return None
+
+    @strawberry.field
     def penalty_paid(self) -> Decimal:
         from django.db.models import Sum
         total = self.payment_installments.aggregate(t=Sum('amount_applied'))['t'] or Decimal('0.00')

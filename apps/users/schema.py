@@ -5,7 +5,7 @@ Exporta queries y mutations relacionadas SOLO con usuarios
 import strawberry
 
 from .queries import UserQuery
-from .mutations import user_login, create_user, update_user, admin_set_password
+from .mutations import user_login, create_user, update_user, admin_set_password, update_profile, change_password
 
 
 @strawberry.type
@@ -13,10 +13,12 @@ class UserMutation:
     """
     Mutations relacionadas con usuarios
     """
-    user_login = user_login
-    create_user = create_user
-    update_user = update_user
+    user_login         = user_login
+    create_user        = create_user
+    update_user        = update_user
     admin_set_password = admin_set_password
+    update_profile     = update_profile
+    change_password    = change_password
 
 
 __all__ = ['UserQuery', 'UserMutation']

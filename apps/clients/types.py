@@ -63,6 +63,16 @@ class CollectionRouteItemType:
     paid: bool
     loan_id: int = strawberry.field(name="loanId", default=0)
     loan_status: str = strawberry.field(name="loanStatus", default="ACTIVE")
+    loan_initial_amount: Optional[Decimal] = strawberry.field(name="loanInitialAmount", default=None)
+    loan_total_amount: Optional[Decimal] = strawberry.field(name="loanTotalAmount", default=None)
+    loan_date: Optional[str] = strawberry.field(name="loanDate", default=None)
+    penalty_applied: Decimal = strawberry.field(name="penaltyApplied", default=Decimal('0.00'))
+    penalty_type: Optional[str] = strawberry.field(name="penaltyType", default=None)
+    penalty_amount: Optional[Decimal] = strawberry.field(name="penaltyAmount", default=None)
+    penalty_percentage: Optional[Decimal] = strawberry.field(name="penaltyPercentage", default=None)
+    pending_amount: Decimal = strawberry.field(name="pendingAmount", default=Decimal('0.00'))
+    installment_number: Optional[int] = strawberry.field(name="installmentNumber", default=None)
+    total_installments: int = strawberry.field(name="totalInstallments", default=0)
 
 
 @strawberry.django.type(ClientDocument, fields="__all__")
