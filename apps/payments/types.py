@@ -74,6 +74,14 @@ class PaymentType:
             return None
 
     @strawberry.field
+    def loan_date(self) -> Optional[str]:
+        try:
+            d = self.loan.loan_date if self.loan_id else None
+            return str(d) if d else None
+        except Exception:
+            return None
+
+    @strawberry.field
     def penalty_paid(self) -> Decimal:
         from django.db.models import Sum
         total = self.payment_installments.aggregate(t=Sum('amount_applied'))['t'] or Decimal('0.00')
