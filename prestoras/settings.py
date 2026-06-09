@@ -40,8 +40,8 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',
     'corsheaders.middleware.CorsMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -74,7 +74,7 @@ WSGI_APPLICATION = 'prestoras.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.contrib.gis.db.backends.postgis' if os.environ.get('USE_POSTGIS') == 'True' else 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME', 'prestoras'),
+        'NAME': os.environ.get('DB_NAME', 'prestora'),
         'USER': os.environ.get('DB_USER', 'postgres'),
         'PASSWORD': os.environ.get('DB_PASSWORD', 'italo'),
         'HOST': os.environ.get('DB_HOST', 'localhost'),
@@ -115,6 +115,7 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # STATIC_URL: URL base para servir archivos estáticos
 STATIC_URL = '/static/'
+# STATIC_URL = '/prestoras/static/'
 # STATIC_ROOT: Directorio donde se recopilan archivos estáticos para producción
 # Se usa con: python manage.py collectstatic
 STATIC_ROOT = BASE_DIR / 'staticfiles'
@@ -129,6 +130,7 @@ STATICFILES_DIRS = [
 # Media files (archivos subidos por usuarios: imágenes, documentos, etc.)
 # MEDIA_URL: URL base para servir archivos media
 MEDIA_URL = '/media/'
+# MEDIA_URL = '/prestoras/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
@@ -144,7 +146,19 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:8000",
 ]
 
-CORS_ALLOW_ALL_ORIGINS = DEBUG  # Solo en desarrollo
+CORS_ALLOW_ALL_ORIGINS = True  # Desarrollo local — en producción usar CORS_ALLOWED_ORIGINS
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+]
 
 # JWT Configuration - Token de 24 horas
 JWT_SECRET_KEY = SECRET_KEY
@@ -190,3 +204,6 @@ LOGGING = {
 
 # Crear directorio de logs si no existe
 os.makedirs(BASE_DIR / 'logs', exist_ok=True)
+# Prefijo de URL para cuando corre bajo /prestoras/
+# FORCE_SCRIPT_NAME = '/prestoras'
+# USE_X_FORWARDED_HOST = True
