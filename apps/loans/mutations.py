@@ -590,6 +590,132 @@ def update_loan_penalty(
         )
 
 
+@strawberry.type
+class ActivateLoanPenaltyResult:
+    """Resultado de activar/reconfigurar la mora de un préstamo"""
+    success: bool
+    message: str
+    loan: Optional[LoanType] = None
+
+
+@strawberry.mutation
+def activate_loan_penalty(
+    info: Info,
+    loan_id: int,
+    penalty_type: str,
+    penalty_amount: Optional[Decimal] = None,
+    penalty_percentage: Optional[Decimal] = None,
+) -> ActivateLoanPenaltyResult:
+    """
+    Activa o reconfigura la mora de un préstamo existente.
+
+    A diferencia de update_loan_penalty (que congela un valor con override=True),
+    este mutation configura la tasa y deja el cálculo en modo dinámico (día a día).
+    La mora se acumula desde end_date, por lo que préstamos con días vencidos
+    mostrarán mora acumulada de forma inmediata al llamar calculate_penalty.
+    """
+    user = get_current_user_from_info(info)
+    if not user or user.role != 'ADMIN':
+        return ActivateLoanPenaltyResult(
+            success=False,
+            message="Solo el administrador puede configurar la mora.",
+            loan=None
+        )
+    try:
+        with transaction.atomic():
+            try:
+                loan = Loan.objects.get(id=loan_id)
+            except Loan.DoesNotExist:
+                return ActivateLoanPenaltyResult(
+                    success=False, message="Préstamo no encontrado.", loan=None
+                )
+
+            if loan.company_id != user.company_id:
+                return ActivateLoanPenaltyResult(
+                    success=False, message="No tiene acceso a este préstamo.", loan=None
+                )
+
+            if loan.status in ['COMPLETED', 'CANCELLED', 'REFINANCED']:
+                return ActivateLoanPenaltyResult(
+                    success=False,
+                    message="No se puede configurar mora en un préstamo finalizado.",
+                    loan=None
+                )
+
+            if penalty_type not in ['FIXED', 'PERCENTAGE']:
+                return ActivateLoanPenaltyResult(
+                    success=False,
+                    message="Tipo de mora inválido. Use FIXED o PERCENTAGE.",
+                    loan=None
+                )
+
+            if penalty_type == 'FIXED':
+                if not penalty_amount or penalty_amount <= Decimal('0'):
+                    return ActivateLoanPenaltyResult(
+                        success=False,
+                        message="El monto fijo de mora debe ser mayor a 0.",
+                        loan=None
+                    )
+            else:
+                if not penalty_percentage or penalty_percentage <= Decimal('0'):
+                    return ActivateLoanPenaltyResult(
+                        success=False,
+                        message="El porcentaje de mora debe ser mayor a 0.",
+                        loan=None
+                    )
+
+            from apps.payments.models import PenaltyAdjustment
+
+            previous_penalty = loan.penalty_applied
+
+            # Configurar tasa y habilitar cálculo dinámico (sin override)
+            loan.penalty_type = penalty_type
+            loan.penalty_amount = penalty_amount or Decimal('0.00')
+            loan.penalty_percentage = penalty_percentage or Decimal('0.00')
+            loan.penalty_override = False
+            loan.penalty_applied = Decimal('0.00')
+            loan.save(update_fields=[
+                'penalty_type', 'penalty_amount', 'penalty_percentage',
+                'penalty_override', 'penalty_applied',
+            ])
+
+            # Calcular mora acumulada desde end_date hasta hoy y persistir
+            accumulated = loan.calculate_penalty(save=True)
+
+            # Pasar a DEFAULTING si hay mora acumulada y el préstamo está vencido
+            today = timezone.now().date()
+            if accumulated > Decimal('0.00') and loan.status == 'ACTIVE' and loan.end_date < today:
+                loan.status = 'DEFAULTING'
+                loan.save(update_fields=['status'])
+                loan.client.update_classification()
+
+            tipo_str = (
+                f"Fija S/ {penalty_amount}/día"
+                if penalty_type == 'FIXED'
+                else f"Porcentual {penalty_percentage}%/día"
+            )
+            PenaltyAdjustment.objects.create(
+                loan=loan,
+                adjustment_type='MODIFY',
+                previous_penalty=previous_penalty,
+                new_penalty=accumulated,
+                reason=f"Mora activada/reconfigurada: {tipo_str}. Mora acumulada: S/ {accumulated}"
+            )
+
+            return ActivateLoanPenaltyResult(
+                success=True,
+                message=f"Mora activada correctamente. Mora acumulada: S/ {accumulated}",
+                loan=loan
+            )
+
+    except Exception as e:
+        return ActivateLoanPenaltyResult(
+            success=False,
+            message=f"Error al activar mora: {str(e)}",
+            loan=None
+        )
+
+
 @strawberry.mutation
 def refinance_loan(
     info: Info,
