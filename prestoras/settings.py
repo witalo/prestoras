@@ -74,9 +74,9 @@ WSGI_APPLICATION = 'prestoras.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.contrib.gis.db.backends.postgis' if os.environ.get('USE_POSTGIS') == 'True' else 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME', '*****'),
-        'USER': os.environ.get('DB_USER', '*****'),
-        'PASSWORD': os.environ.get('DB_PASSWORD', '*****'),
+        'NAME': os.environ.get('DB_NAME', 'prestoras'),
+        'USER': os.environ.get('DB_USER', 'postgres'),
+        'PASSWORD': os.environ.get('DB_PASSWORD', 'italo'),
         'HOST': os.environ.get('DB_HOST', 'localhost'),
         'PORT': os.environ.get('DB_PORT', '5432'),
         'OPTIONS': {
@@ -114,8 +114,7 @@ USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
 # STATIC_URL: URL base para servir archivos estáticos
-# STATIC_URL = '/static/'
-STATIC_URL = '/prestoras/static/'
+STATIC_URL = '/static/'
 # STATIC_ROOT: Directorio donde se recopilan archivos estáticos para producción
 # Se usa con: python manage.py collectstatic
 STATIC_ROOT = BASE_DIR / 'staticfiles'
@@ -129,8 +128,7 @@ STATICFILES_DIRS = [
 
 # Media files (archivos subidos por usuarios: imágenes, documentos, etc.)
 # MEDIA_URL: URL base para servir archivos media
-# MEDIA_URL = '/media/'
-MEDIA_URL = '/prestoras/media/'
+MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
@@ -192,6 +190,3 @@ LOGGING = {
 
 # Crear directorio de logs si no existe
 os.makedirs(BASE_DIR / 'logs', exist_ok=True)
-# Prefijo de URL para cuando corre bajo /prestoras/
-FORCE_SCRIPT_NAME = '/prestoras'
-USE_X_FORWARDED_HOST = True
