@@ -180,9 +180,11 @@ class PaymentQuery:
             active_qs = loans_qs.filter(status__in=['ACTIVE', 'DEFAULTING'])
 
             agg = loans_qs.aggregate(
-                disbursed=Sum('initial_amount'),
                 collected=Sum('paid_amount'),
                 penalty=Sum('penalty_applied'),
+            )
+            disbursed_agg = loans_qs.exclude(status='CANCELLED').aggregate(
+                disbursed=Sum('initial_amount'),
             )
             pending_agg = active_qs.aggregate(pending=Sum('pending_amount'))
             today_agg = Payment.objects.filter(
@@ -195,7 +197,7 @@ class PaymentQuery:
                 active_loans=loans_qs.filter(status='ACTIVE').count(),
                 completed_loans=loans_qs.filter(status='COMPLETED').count(),
                 defaulting_loans=loans_qs.filter(status='DEFAULTING').count(),
-                total_disbursed=agg['disbursed'] or ZERO,
+                total_disbursed=disbursed_agg['disbursed'] or ZERO,
                 total_collected=agg['collected'] or ZERO,
                 total_pending=pending_agg['pending'] or ZERO,
                 total_penalty=agg['penalty'] or ZERO,
@@ -209,9 +211,11 @@ class PaymentQuery:
         active_qs = loans_qs.filter(status__in=['ACTIVE', 'DEFAULTING'])
 
         agg = loans_qs.aggregate(
-            disbursed=Sum('initial_amount'),
             collected=Sum('paid_amount'),
             penalty=Sum('penalty_applied'),
+        )
+        disbursed_agg = loans_qs.exclude(status='CANCELLED').aggregate(
+            disbursed=Sum('initial_amount'),
         )
         pending_agg = active_qs.aggregate(pending=Sum('pending_amount'))
         today_agg = Payment.objects.filter(
@@ -250,7 +254,7 @@ class PaymentQuery:
             active_loans=loans_qs.filter(status='ACTIVE').count(),
             completed_loans=loans_qs.filter(status='COMPLETED').count(),
             defaulting_loans=loans_qs.filter(status='DEFAULTING').count(),
-            total_disbursed=agg['disbursed'] or ZERO,
+            total_disbursed=disbursed_agg['disbursed'] or ZERO,
             total_collected=agg['collected'] or ZERO,
             total_pending=pending_agg['pending'] or ZERO,
             total_penalty=agg['penalty'] or ZERO,
