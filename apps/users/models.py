@@ -1,7 +1,7 @@
 """
 Modelo de Usuario extendido de Django
 Incluye DNI, teléfono, correo y cargo del empleado
-Tipos: Administrador, Cobrador
+Tipos: Administrador, Gestor
 """
 from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractUser
@@ -10,7 +10,7 @@ from django.db import models
 # Opciones para cargo/rol del usuario
 USER_ROLE_CHOICES = [
     ('ADMIN', 'Administrador'),
-    ('COLLECTOR', 'Cobrador'),
+    ('COLLECTOR', 'Gestor'),
 ]
 
 
