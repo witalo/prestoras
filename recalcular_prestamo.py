@@ -22,7 +22,7 @@ from apps.loans.models import Loan, Installment
 from apps.payments.models import Payment, PaymentInstallment
 
 # ── Configuración ─────────────────────────────────────────────────────────────
-DRY_RUN = True   # Cambia a False para aplicar los cambios reales
+DRY_RUN = False   # Cambia a False para aplicar los cambios reales
 # ─────────────────────────────────────────────────────────────────────────────
 
 SEP = "=" * 70
