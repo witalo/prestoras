@@ -533,8 +533,8 @@ def update_loan_penalty(
         penalty_percentage: Porcentaje de mora (opcional)
     """
     user = get_current_user_from_info(info)
-    if not user or user.role != 'ADMIN':
-        return UpdateLoanPenaltyResult(success=False, message="Solo el administrador puede ajustar la mora.", loan=None)
+    if not user or user.role not in ('ADMIN', 'COLLECTOR'):
+        return UpdateLoanPenaltyResult(success=False, message="No tiene permisos para ajustar la mora.", loan=None)
     try:
         with transaction.atomic():
             try:
@@ -547,6 +547,8 @@ def update_loan_penalty(
                 )
             if loan.company_id != user.company_id:
                 return UpdateLoanPenaltyResult(success=False, message="No puede ajustar mora de otra empresa.", loan=None)
+            if user.role == 'COLLECTOR' and not user.assigned_clients.filter(id=loan.client_id).exists():
+                return UpdateLoanPenaltyResult(success=False, message="Solo puede ajustar mora de sus clientes asignados.", loan=None)
             
             from apps.payments.models import PenaltyAdjustment
             previous_penalty = loan.penalty_applied
@@ -864,6 +866,8 @@ def admin_adjust_loan(
     reajustar_fechas: bool = False,
     reajustar_montos: bool = False,
     new_amount: Optional[Decimal] = None,
+    reajustar_cuotas: bool = False,
+    new_number_of_installments: Optional[int] = None,
 ) -> AdminAdjustLoanResult:
     """
     Ajuste administrativo de un préstamo (solo ADMIN).
@@ -898,6 +902,104 @@ def admin_adjust_loan(
             today = timezone.now().date()
             installments = list(loan.installments.order_by('installment_number'))
             n = loan.number_of_installments
+
+            # ── REAJUSTE DE CUOTAS (regenera cuotas pendientes) ──────────────
+            if reajustar_cuotas:
+                if not new_number_of_installments or new_number_of_installments < 1:
+                    return AdminAdjustLoanResult(success=False, message="Debe indicar el nuevo número de cuotas.", loan=None)
+
+                if periodicity is not None:
+                    valid = ['DAILY', 'WEEKLY', 'BIWEEKLY', 'MONTHLY', 'QUARTERLY', 'CUSTOM']
+                    if periodicity not in valid:
+                        return AdminAdjustLoanResult(success=False, message=f"Periodicidad inválida: {periodicity}", loan=None)
+                    loan.periodicity = periodicity
+
+                if loan_date is not None:
+                    loan.loan_date = loan_date
+
+                if new_amount is not None and new_amount > 0:
+                    loan.initial_amount = new_amount
+
+                loan.calculate_total_amount()
+
+                unit = Decimal('0.01')
+                paid_insts    = [i for i in installments if i.paid_amount > 0]
+                pending_insts = [i for i in installments if i.paid_amount == 0]
+                n_paid     = len(paid_insts)
+                n_remaining = new_number_of_installments - n_paid
+
+                if n_remaining <= 0:
+                    return AdminAdjustLoanResult(
+                        success=False,
+                        message=f"El nuevo número de cuotas ({new_number_of_installments}) debe ser mayor al número de cuotas ya pagadas ({n_paid}).",
+                        loan=None
+                    )
+
+                total_interest  = (loan.initial_amount * loan.interest_rate / Decimal('100')).quantize(unit, rounding=ROUND_HALF_UP)
+                interest_paid   = sum(i.interest_amount for i in paid_insts)
+                capital_paid    = sum(i.capital_amount  for i in paid_insts)
+                remaining_interest = total_interest - interest_paid
+                remaining_capital  = loan.initial_amount - capital_paid
+                remaining_total    = remaining_capital + remaining_interest
+
+                loan.paid_amount    = sum(i.paid_amount for i in paid_insts)
+                loan.pending_amount = remaining_total
+
+                # Fecha de inicio de las nuevas cuotas
+                if paid_insts:
+                    new_start = _due_date(paid_insts[-1].due_date, loan.periodicity, 1)
+                elif loan.loan_date:
+                    new_start = _start_date_from_loan_date(loan.loan_date, loan.periodicity)
+                else:
+                    return AdminAdjustLoanResult(success=False, message="Debe indicar la fecha del préstamo para calcular las nuevas cuotas.", loan=None)
+
+                new_end = _due_date(new_start, loan.periodicity, n_remaining - 1)
+                loan.end_date = new_end
+                if not paid_insts:
+                    loan.start_date = new_start
+
+                loan.number_of_installments = new_number_of_installments
+
+                # Eliminar cuotas sin pagos
+                Installment.objects.filter(id__in=[i.id for i in pending_insts]).delete()
+
+                # Generar nuevas cuotas para el saldo restante
+                capital_unit  = (remaining_capital  / Decimal(str(n_remaining))).quantize(unit, rounding=ROUND_HALF_UP)
+                interest_unit = (remaining_interest / Decimal(str(n_remaining))).quantize(unit, rounding=ROUND_HALF_UP)
+                total_unit    = capital_unit + interest_unit
+
+                new_installments = []
+                for i in range(n_remaining):
+                    pos     = n_paid + i + 1
+                    is_last = (i == n_remaining - 1)
+                    due     = _due_date(new_start, loan.periodicity, i)
+                    if is_last:
+                        due = new_end
+                        cap = remaining_capital  - capital_unit  * (n_remaining - 1)
+                        itr = remaining_interest - interest_unit * (n_remaining - 1)
+                        tot = remaining_total    - total_unit    * (n_remaining - 1)
+                    else:
+                        cap = capital_unit
+                        itr = interest_unit
+                        tot = total_unit
+                    new_installments.append(Installment(
+                        loan=loan,
+                        installment_number=pos,
+                        due_date=due,
+                        capital_amount=cap,
+                        interest_amount=itr,
+                        total_amount=tot,
+                        status='PENDING' if due >= today else 'OVERDUE',
+                    ))
+
+                Installment.objects.bulk_create(new_installments)
+                loan.penalty_override = False
+                loan.save()
+                return AdminAdjustLoanResult(
+                    success=True,
+                    message=f"Cuotas reagrupadas: {new_number_of_installments} cuotas en total, {n_paid} conservadas con pagos, {n_remaining} nuevas generadas ({loan.periodicity}).",
+                    loan=loan
+                )
 
             if len(installments) != n:
                 return AdminAdjustLoanResult(
