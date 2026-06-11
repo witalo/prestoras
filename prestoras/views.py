@@ -12,7 +12,9 @@ from .utils_auth import get_user_from_jwt
 def get_context(request, response):
     """Contexto GraphQL: request + usuario actual desde JWT (para scope admin/cobrador)."""
     from apps.users.models import User
-    ctx = {'request': request, 'response': response, 'user': None}
+    auth = request.META.get('HTTP_AUTHORIZATION') or ''
+    token_provided = auth.startswith('Bearer ')
+    ctx = {'request': request, 'response': response, 'user': None, 'token_provided': token_provided}
     payload = get_user_from_jwt(request)
     if payload and payload.get('type') == 'user':
         try:

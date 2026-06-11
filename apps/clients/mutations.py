@@ -14,7 +14,7 @@ from .models import Client, ClientDocument, ClientCollector, DOCUMENT_TYPE_CHOIC
 from .types import ClientType, ClientDocumentType, DocumentSlotType
 from apps.companies.models import Company
 from apps.zones.models import Zone
-from prestoras.utils_auth import get_current_user_from_info
+from prestoras.utils_auth import get_current_user_from_info, get_session_error_message
 
 
 @strawberry.type
@@ -54,7 +54,7 @@ def create_client_document(
     """
     current_user = get_current_user_from_info(info)
     if not current_user:
-        return CreateClientDocumentResult(success=False, message="No autorizado.", document=None)
+        return CreateClientDocumentResult(success=False, message=get_session_error_message(info), document=None)
     try:
         # Validar que el cliente exista
         try:
@@ -161,7 +161,7 @@ def update_client_document(
     """
     current_user = get_current_user_from_info(info)
     if not current_user:
-        return UpdateClientDocumentResult(success=False, message="No autorizado.", document=None)
+        return UpdateClientDocumentResult(success=False, message=get_session_error_message(info), document=None)
     try:
         # Obtener el documento
         try:
@@ -326,7 +326,7 @@ def upload_client_document(
     """
     current_user = get_current_user_from_info(info)
     if not current_user:
-        return UploadClientDocumentResult(success=False, message="No autorizado.")
+        return UploadClientDocumentResult(success=False, message=get_session_error_message(info))
 
     valid_types = [c[0] for c in DOCUMENT_TYPE_CHOICES]
     if document_type not in valid_types:
@@ -392,7 +392,7 @@ def delete_client_document(
     """Elimina un documento del cliente y su archivo físico."""
     current_user = get_current_user_from_info(info)
     if not current_user:
-        return DeleteClientDocumentResult(success=False, message="No autorizado.")
+        return DeleteClientDocumentResult(success=False, message=get_session_error_message(info))
 
     try:
         doc = ClientDocument.objects.select_related('client').get(id=document_id)
@@ -468,7 +468,7 @@ def create_client(
     """
     current_user = get_current_user_from_info(info)
     if not current_user:
-        return CreateClientResult(success=False, message="No autorizado.", client=None)
+        return CreateClientResult(success=False, message=get_session_error_message(info), client=None)
     if current_user.company_id != company_id:
         return CreateClientResult(success=False, message="No puede crear clientes de otra empresa.", client=None)
     try:
@@ -586,7 +586,7 @@ def update_client(
     """
     current_user = get_current_user_from_info(info)
     if not current_user:
-        return UpdateClientResult(success=False, message="No autorizado.", client=None)
+        return UpdateClientResult(success=False, message=get_session_error_message(info), client=None)
     try:
         # Obtener el cliente
         try:
@@ -706,7 +706,9 @@ def assign_clients_to_collector(
     - replace_existing: si True, reemplaza la cartera del cobrador por client_ids; si False, agrega.
     """
     user = get_current_user_from_info(info)
-    if not user or user.role != 'ADMIN':
+    if not user:
+        return AssignClientsToCollectorResult(success=False, message=get_session_error_message(info), assigned_count=0)
+    if user.role != 'ADMIN':
         return AssignClientsToCollectorResult(
             success=False,
             message="Solo un administrador puede asignar cartera.",
@@ -779,7 +781,9 @@ def remove_clients_from_collector(
     Quitar clientes de la cartera de un cobrador. Solo administrador.
     """
     user = get_current_user_from_info(info)
-    if not user or user.role != 'ADMIN':
+    if not user:
+        return RemoveClientsFromCollectorResult(success=False, message=get_session_error_message(info), removed_count=0)
+    if user.role != 'ADMIN':
         return RemoveClientsFromCollectorResult(
             success=False,
             message="Solo un administrador puede modificar la cartera.",

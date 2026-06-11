@@ -43,3 +43,14 @@ def get_current_user_from_info(info):
     if not info.context:
         return None
     return info.context.get('user') if hasattr(info.context, 'get') else getattr(info.context, 'user', None)
+
+
+def get_session_error_message(info):
+    """
+    Retorna un mensaje de error de sesión distinguiendo token inválido/expirado vs sin token.
+    Usar cuando user is None para dar el mensaje correcto al cliente.
+    """
+    ctx = info.context if hasattr(info.context, 'get') else None
+    if ctx and ctx.get('token_provided'):
+        return "Sesión inválida o expirada."
+    return "No autenticado."

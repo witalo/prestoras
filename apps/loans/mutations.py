@@ -17,7 +17,7 @@ from apps.companies.models import Company
 from apps.clients.models import Client
 from apps.companies.models import LoanType as CompanyLoanType
 from apps.payments.models import Payment
-from prestoras.utils_auth import get_current_user_from_info
+from prestoras.utils_auth import get_current_user_from_info, get_session_error_message
 
 
 @strawberry.type
@@ -217,7 +217,9 @@ def create_loan(
     Retorna el préstamo creado con sus cuotas generadas.
     """
     user = get_current_user_from_info(info)
-    if not user or user.role != 'ADMIN':
+    if not user:
+        return CreateLoanResult(success=False, message=get_session_error_message(info), loan=None)
+    if user.role != 'ADMIN':
         return CreateLoanResult(success=False, message="Solo el administrador puede crear préstamos.", loan=None)
     if user.company_id != company_id:
         return CreateLoanResult(success=False, message="No puede crear préstamos de otra empresa.", loan=None)
@@ -386,7 +388,9 @@ def update_loan(
     Retorna el préstamo actualizado.
     """
     user = get_current_user_from_info(info)
-    if not user or user.role != 'ADMIN':
+    if not user:
+        return UpdateLoanResult(success=False, message=get_session_error_message(info), loan=None)
+    if user.role != 'ADMIN':
         return UpdateLoanResult(success=False, message="Solo el administrador puede modificar préstamos.", loan=None)
     try:
         with transaction.atomic():
@@ -533,7 +537,9 @@ def update_loan_penalty(
         penalty_percentage: Porcentaje de mora (opcional)
     """
     user = get_current_user_from_info(info)
-    if not user or user.role not in ('ADMIN', 'COLLECTOR'):
+    if not user:
+        return UpdateLoanPenaltyResult(success=False, message=get_session_error_message(info), loan=None)
+    if user.role not in ('ADMIN', 'COLLECTOR'):
         return UpdateLoanPenaltyResult(success=False, message="No tiene permisos para ajustar la mora.", loan=None)
     try:
         with transaction.atomic():
@@ -617,7 +623,9 @@ def activate_loan_penalty(
     mostrarán mora acumulada de forma inmediata al llamar calculate_penalty.
     """
     user = get_current_user_from_info(info)
-    if not user or user.role != 'ADMIN':
+    if not user:
+        return ActivateLoanPenaltyResult(success=False, message=get_session_error_message(info), loan=None)
+    if user.role != 'ADMIN':
         return ActivateLoanPenaltyResult(
             success=False,
             message="Solo el administrador puede configurar la mora.",
@@ -754,7 +762,9 @@ def refinance_loan(
     Retorna el nuevo préstamo refinanciado.
     """
     user = get_current_user_from_info(info)
-    if not user or user.role != 'ADMIN':
+    if not user:
+        return RefinanceLoanResult(success=False, message=get_session_error_message(info), loan=None)
+    if user.role != 'ADMIN':
         return RefinanceLoanResult(success=False, message="Solo el administrador puede refinanciar préstamos.", loan=None)
     if user.company_id != company_id:
         return RefinanceLoanResult(success=False, message="No puede refinanciar préstamos de otra empresa.", loan=None)
@@ -868,6 +878,7 @@ def admin_adjust_loan(
     new_amount: Optional[Decimal] = None,
     reajustar_cuotas: bool = False,
     new_number_of_installments: Optional[int] = None,
+    new_interest_rate: Optional[Decimal] = None,
 ) -> AdminAdjustLoanResult:
     """
     Ajuste administrativo de un préstamo (solo ADMIN).
@@ -879,7 +890,9 @@ def admin_adjust_loan(
     Ambos pueden activarse de forma independiente en una misma llamada.
     """
     user = get_current_user_from_info(info)
-    if not user or user.role != 'ADMIN':
+    if not user:
+        return AdminAdjustLoanResult(success=False, message=get_session_error_message(info), loan=None)
+    if user.role != 'ADMIN':
         return AdminAdjustLoanResult(success=False, message="Solo el administrador puede ajustar préstamos.", loan=None)
     try:
         with transaction.atomic():
@@ -919,6 +932,8 @@ def admin_adjust_loan(
 
                 if new_amount is not None and new_amount > 0:
                     loan.initial_amount = new_amount
+                if new_interest_rate is not None and new_interest_rate >= 0:
+                    loan.interest_rate = new_interest_rate
 
                 loan.calculate_total_amount()
 
@@ -1053,6 +1068,8 @@ def admin_adjust_loan(
             if reajustar_montos:
                 if new_amount is not None and new_amount > 0:
                     loan.initial_amount = new_amount
+                if new_interest_rate is not None and new_interest_rate >= 0:
+                    loan.interest_rate = new_interest_rate
                 # Recalcular total (capital + intereses)
                 loan.calculate_total_amount()
 
@@ -1105,7 +1122,9 @@ def admin_adjust_loan(
 def delete_loan(info: Info, loan_id: int) -> DeleteLoanResult:
     """Elimina un préstamo sin pagos. Solo administrador."""
     user = get_current_user_from_info(info)
-    if not user or user.role != 'ADMIN':
+    if not user:
+        return DeleteLoanResult(success=False, message=get_session_error_message(info))
+    if user.role != 'ADMIN':
         return DeleteLoanResult(success=False, message="Solo el administrador puede eliminar préstamos.")
     try:
         loan = Loan.objects.get(id=loan_id)

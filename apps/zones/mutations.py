@@ -9,7 +9,7 @@ from strawberry.types import Info
 from .models import Zone
 from .types import ZoneType
 from apps.companies.models import Company
-from prestoras.utils_auth import get_current_user_from_info
+from prestoras.utils_auth import get_current_user_from_info, get_session_error_message
 
 
 @strawberry.type
@@ -39,7 +39,9 @@ def create_zone(
 ) -> CreateZoneResult:
     """Crea una nueva zona. Solo administrador."""
     user = get_current_user_from_info(info)
-    if not user or user.role != 'ADMIN':
+    if not user:
+        return CreateZoneResult(success=False, message=get_session_error_message(info), zone=None)
+    if user.role != 'ADMIN':
         return CreateZoneResult(success=False, message="Solo el administrador puede crear zonas.", zone=None)
     if user.company_id != company_id:
         return CreateZoneResult(success=False, message="No puede crear zonas de otra empresa.", zone=None)
@@ -97,7 +99,9 @@ class DeleteZoneResult:
 def delete_zone(info: Info, zone_id: int) -> DeleteZoneResult:
     """Elimina una zona. Solo si no tiene clientes asignados."""
     user = get_current_user_from_info(info)
-    if not user or user.role != 'ADMIN':
+    if not user:
+        return DeleteZoneResult(success=False, message=get_session_error_message(info))
+    if user.role != 'ADMIN':
         return DeleteZoneResult(success=False, message="Solo el administrador puede eliminar zonas.")
     try:
         zone = Zone.objects.get(id=zone_id)
@@ -127,7 +131,9 @@ def update_zone(
 ) -> UpdateZoneResult:
     """Actualiza una zona. Solo administrador."""
     user = get_current_user_from_info(info)
-    if not user or user.role != 'ADMIN':
+    if not user:
+        return UpdateZoneResult(success=False, message=get_session_error_message(info), zone=None)
+    if user.role != 'ADMIN':
         return UpdateZoneResult(success=False, message="Solo el administrador puede editar zonas.", zone=None)
     try:
         # Obtener la zona

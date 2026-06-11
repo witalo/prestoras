@@ -16,7 +16,7 @@ from apps.loans.models import Loan
 from apps.clients.models import Client
 from apps.companies.models import Company
 from apps.users.models import User
-from prestoras.utils_auth import get_current_user_from_info
+from prestoras.utils_auth import get_current_user_from_info, get_session_error_message
 
 
 @strawberry.input
@@ -75,7 +75,7 @@ def create_payment(
     """
     current_user = get_current_user_from_info(info)
     if not current_user:
-        return CreatePaymentResult(success=False, message="No autorizado.", payment=None)
+        return CreatePaymentResult(success=False, message=get_session_error_message(info), payment=None)
     try:
         with transaction.atomic():
             try:
@@ -216,7 +216,9 @@ def correct_payment(
     Solo ADMIN puede usar esta acción.
     """
     current_user = get_current_user_from_info(info)
-    if not current_user or current_user.role != 'ADMIN':
+    if not current_user:
+        return CorrectPaymentResult(success=False, message=get_session_error_message(info), payment=None)
+    if current_user.role != 'ADMIN':
         return CorrectPaymentResult(success=False, message="Solo el administrador puede corregir pagos.", payment=None)
     try:
         with transaction.atomic():
@@ -356,7 +358,9 @@ def delete_payment(info: Info, payment_id: int) -> DeletePaymentResult:
     Solo ADMIN.
     """
     current_user = get_current_user_from_info(info)
-    if not current_user or current_user.role != 'ADMIN':
+    if not current_user:
+        return DeletePaymentResult(success=False, message=get_session_error_message(info))
+    if current_user.role != 'ADMIN':
         return DeletePaymentResult(success=False, message="Solo el administrador puede eliminar pagos.")
     try:
         with transaction.atomic():
@@ -449,7 +453,9 @@ def update_payment(
     Retorna el pago actualizado.
     """
     current_user = get_current_user_from_info(info)
-    if not current_user or current_user.role != 'ADMIN':
+    if not current_user:
+        return UpdatePaymentResult(success=False, message=get_session_error_message(info), payment=None)
+    if current_user.role != 'ADMIN':
         return UpdatePaymentResult(success=False, message="Solo el administrador puede modificar pagos.", payment=None)
     try:
         try:
