@@ -61,18 +61,15 @@ class UserLoginResult:
     expires_at: Optional[datetime] = None
 
 
-def generate_jwt_token(payload: dict, expires_in_hours: int = 24) -> tuple[str, datetime]:
+def generate_jwt_token(payload: dict, expires_in_hours: float = None) -> tuple[str, datetime]:
     """
-    Genera un token JWT con expiración
-    
-    Args:
-        payload: Datos a incluir en el token
-        expires_in_hours: Horas de expiración (por defecto 24 horas)
-    
-    Returns:
-        Tupla con (token, expires_at)
+    Genera un token JWT con expiración usando settings.JWT_EXPIRATION_DELTA.
     """
-    expires_at = datetime.utcnow() + timedelta(hours=expires_in_hours)
+    if expires_in_hours is None:
+        delta = getattr(settings, 'JWT_EXPIRATION_DELTA', timedelta(hours=24))
+    else:
+        delta = timedelta(hours=expires_in_hours)
+    expires_at = datetime.utcnow() + delta
     payload['exp'] = expires_at
     payload['iat'] = datetime.utcnow()
     
@@ -148,7 +145,7 @@ def user_login(
             'role': user.role,
         }
         
-        token, expires_at = generate_jwt_token(payload, expires_in_hours=24)
+        token, expires_at = generate_jwt_token(payload)
         
         return UserLoginResult(
             success=True,
