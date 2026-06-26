@@ -179,14 +179,13 @@ class PaymentQuery:
             loans_qs = Loan.objects.filter(company_id=company_id, client_id__in=client_ids)
             active_qs = loans_qs.filter(status__in=['ACTIVE', 'DEFAULTING'])
 
-            agg = loans_qs.aggregate(
+            # Solo préstamos en circulación (ACTIVE + DEFAULTING) para todos los montos
+            agg = active_qs.aggregate(
+                disbursed=Sum('initial_amount'),
                 collected=Sum('paid_amount'),
+                pending=Sum('pending_amount'),
                 penalty=Sum('penalty_applied'),
             )
-            disbursed_agg = loans_qs.exclude(status='CANCELLED').aggregate(
-                disbursed=Sum('initial_amount'),
-            )
-            pending_agg = active_qs.aggregate(pending=Sum('pending_amount'))
             today_agg = Payment.objects.filter(
                 company_id=company_id, collector_id=collector_id,
                 status='COMPLETED', payment_date__date=today
@@ -194,12 +193,12 @@ class PaymentQuery:
 
             return DashboardStatsType(
                 total_clients=len(client_ids),
-                active_loans=loans_qs.filter(status='ACTIVE').count(),
+                active_loans=active_qs.count(),
                 completed_loans=loans_qs.filter(status='COMPLETED').count(),
                 defaulting_loans=loans_qs.filter(status='DEFAULTING').count(),
-                total_disbursed=disbursed_agg['disbursed'] or ZERO,
+                total_disbursed=agg['disbursed'] or ZERO,
                 total_collected=agg['collected'] or ZERO,
-                total_pending=pending_agg['pending'] or ZERO,
+                total_pending=agg['pending'] or ZERO,
                 total_penalty=agg['penalty'] or ZERO,
                 collections_today=today_agg['cnt'] or 0,
                 amount_today=today_agg['total'] or ZERO,
@@ -210,14 +209,13 @@ class PaymentQuery:
         loans_qs = Loan.objects.filter(company_id=company_id)
         active_qs = loans_qs.filter(status__in=['ACTIVE', 'DEFAULTING'])
 
-        agg = loans_qs.aggregate(
+        # Solo préstamos en circulación (ACTIVE + DEFAULTING) para todos los montos
+        agg = active_qs.aggregate(
+            disbursed=Sum('initial_amount'),
             collected=Sum('paid_amount'),
+            pending=Sum('pending_amount'),
             penalty=Sum('penalty_applied'),
         )
-        disbursed_agg = loans_qs.exclude(status='CANCELLED').aggregate(
-            disbursed=Sum('initial_amount'),
-        )
-        pending_agg = active_qs.aggregate(pending=Sum('pending_amount'))
         today_agg = Payment.objects.filter(
             company_id=company_id, status='COMPLETED', payment_date__date=today
         ).aggregate(total=Sum('amount'), cnt=Count('id'))
@@ -251,12 +249,12 @@ class PaymentQuery:
 
         return DashboardStatsType(
             total_clients=total_clients,
-            active_loans=loans_qs.filter(status='ACTIVE').count(),
+            active_loans=active_qs.count(),
             completed_loans=loans_qs.filter(status='COMPLETED').count(),
             defaulting_loans=loans_qs.filter(status='DEFAULTING').count(),
-            total_disbursed=disbursed_agg['disbursed'] or ZERO,
+            total_disbursed=agg['disbursed'] or ZERO,
             total_collected=agg['collected'] or ZERO,
-            total_pending=pending_agg['pending'] or ZERO,
+            total_pending=agg['pending'] or ZERO,
             total_penalty=agg['penalty'] or ZERO,
             collections_today=today_agg['cnt'] or 0,
             amount_today=today_agg['total'] or ZERO,
