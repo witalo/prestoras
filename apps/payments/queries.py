@@ -222,13 +222,13 @@ class PaymentQuery:
 
         total_clients = Client.objects.filter(company_id=company_id, is_active=True).count()
 
-        # Collector stats: un row por cobrador con clientes en la empresa
+        # Stats por usuario: todos los usuarios activos de la empresa (admin + cobradores)
         collector_stats = []
-        collectors = User.objects.filter(
-            company_id=company_id, role='COLLECTOR', is_active=True
-        ).prefetch_related('assigned_clients')
+        users = User.objects.filter(
+            company_id=company_id, is_active=True
+        ).prefetch_related('assigned_clients').order_by('role', 'first_name', 'last_name')
 
-        for col in collectors:
+        for col in users:
             col_client_ids = list(col.assigned_clients.filter(is_active=True).values_list('id', flat=True))
             col_active = Loan.objects.filter(
                 company_id=company_id, client_id__in=col_client_ids,
@@ -245,6 +245,7 @@ class PaymentQuery:
                 total_clients=len(col_client_ids),
                 active_loans=col_active,
                 amount_collected_today=col_today,
+                role=col.role,
             ))
 
         return DashboardStatsType(

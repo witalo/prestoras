@@ -161,12 +161,13 @@ class PenaltyAdjustmentType:
 
 @strawberry.type
 class CollectorStatType:
-    """Estadísticas por cobrador para el dashboard."""
+    """Estadísticas por usuario para el dashboard."""
     collector_id: int = strawberry.field(name="collectorId")
     collector_name: str = strawberry.field(name="collectorName")
     total_clients: int = strawberry.field(name="totalClients")
     active_loans: int = strawberry.field(name="activeLoans")
     amount_collected_today: Decimal = strawberry.field(name="amountCollectedToday")
+    role: str = strawberry.field(name="role", default="COLLECTOR")
 
 
 @strawberry.type
