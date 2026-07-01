@@ -498,9 +498,8 @@ class PaymentQuery:
                     share = (pi.amount_applied * inst.interest_amount / inst.total_amount)
                     interest_in_payment += share.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
-            if interest_in_payment <= 0:
-                continue
-
+            # Se incluye el préstamo aunque el pago haya sido 100% mora (interés = 0),
+            # para que "total cobrado" cuadre con el conteo bruto de pagos (ej. Android).
             row = acc.get(loan.id)
             if row is None:
                 client = payment.client
@@ -510,10 +509,12 @@ class PaymentQuery:
                     'client': client,
                     'zone': zone,
                     'interest': Decimal('0.00'),
+                    'collected': Decimal('0.00'),
                     'count': 0,
                 }
                 acc[loan.id] = row
             row['interest'] += interest_in_payment
+            row['collected'] += payment.amount
             row['count'] += 1
 
         result = []
@@ -535,6 +536,7 @@ class PaymentQuery:
                 total_amount=loan.total_amount,
                 interest_earned=row['interest'],
                 payments_count=row['count'],
+                total_collected=row['collected'],
             ))
 
         result.sort(key=lambda r: r.client_full_name)

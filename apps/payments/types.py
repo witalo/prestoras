@@ -249,3 +249,4 @@ class InterestEarnedReportRowType:
     total_amount: Decimal = strawberry.field(name="totalAmount")
     interest_earned: Decimal = strawberry.field(name="interestEarned")
     payments_count: int = strawberry.field(name="paymentsCount")
+    total_collected: Decimal = strawberry.field(name="totalCollected")
