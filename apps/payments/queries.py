@@ -13,7 +13,7 @@ from strawberry.types import Info
 from .models import Payment
 from .types import (
     PaymentType, PaymentVoucherType, DashboardStatsType, CollectorStatType,
-    DailyPaymentType, SaldosReportRowType,
+    DailyPaymentType, SaldosReportRowType, InterestEarnedReportRowType,
 )
 from prestoras.utils_auth import get_current_user_from_info
 
@@ -434,4 +434,108 @@ class PaymentQuery:
                 daily_payments=daily,
             ))
 
+        return result
+
+    @strawberry.field(name="interestEarnedReport")
+    def interest_earned_report(
+        self,
+        info: Info,
+        company_id: int,
+        start_date: date,
+        end_date: date,
+        payment_method: Optional[str] = None,
+        zone_id: Optional[int] = None,
+    ) -> List[InterestEarnedReportRowType]:
+        """
+        Reporte de ganancia: interés efectivamente cobrado (ya pagado por el
+        cliente) en el rango de fechas, agrupado por préstamo. Incluye
+        préstamos en cualquier estado (activos, en mora, refinanciados,
+        completados) siempre que hayan tenido pagos dentro del período.
+        La mora nunca se cuenta aquí porque no pasa por PaymentInstallment.
+        """
+        from decimal import ROUND_HALF_UP
+        from datetime import datetime, time as dt_time
+        from zoneinfo import ZoneInfo
+
+        user = get_current_user_from_info(info)
+        if not user:
+            return []
+
+        lima_tz = ZoneInfo('America/Lima')
+        start_dt = datetime.combine(start_date, dt_time.min, tzinfo=lima_tz)
+        end_dt = datetime.combine(end_date, dt_time.max, tzinfo=lima_tz)
+
+        payments_qs = Payment.objects.filter(
+            company_id=company_id,
+            status='COMPLETED',
+            payment_date__gte=start_dt,
+            payment_date__lte=end_dt,
+        ).select_related('loan', 'client', 'client__zone').prefetch_related(
+            'payment_installments__installment'
+        )
+
+        if user.role == 'COLLECTOR':
+            client_ids = list(user.assigned_clients.values_list('id', flat=True))
+            if not client_ids:
+                return []
+            payments_qs = payments_qs.filter(client_id__in=client_ids)
+
+        if payment_method:
+            payments_qs = payments_qs.filter(payment_method=payment_method)
+        if zone_id:
+            payments_qs = payments_qs.filter(client__zone_id=zone_id)
+
+        acc: dict = {}
+        for payment in payments_qs:
+            loan = payment.loan
+            if not loan:
+                continue
+
+            interest_in_payment = Decimal('0.00')
+            for pi in payment.payment_installments.all():
+                inst = pi.installment
+                if inst and inst.total_amount:
+                    share = (pi.amount_applied * inst.interest_amount / inst.total_amount)
+                    interest_in_payment += share.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+            if interest_in_payment <= 0:
+                continue
+
+            row = acc.get(loan.id)
+            if row is None:
+                client = payment.client
+                zone = getattr(client, 'zone', None)
+                row = {
+                    'loan': loan,
+                    'client': client,
+                    'zone': zone,
+                    'interest': Decimal('0.00'),
+                    'count': 0,
+                }
+                acc[loan.id] = row
+            row['interest'] += interest_in_payment
+            row['count'] += 1
+
+        result = []
+        for row in acc.values():
+            loan = row['loan']
+            client = row['client']
+            zone = row['zone']
+            result.append(InterestEarnedReportRowType(
+                loan_id=loan.id,
+                client_dni=client.dni or '',
+                client_full_name=(
+                    client.full_name
+                    if hasattr(client, 'full_name') and client.full_name
+                    else f"{client.first_name} {client.last_name}".strip()
+                ),
+                zone_name=zone.name if zone else None,
+                loan_status=loan.status,
+                initial_amount=loan.initial_amount,
+                total_amount=loan.total_amount,
+                interest_earned=row['interest'],
+                payments_count=row['count'],
+            ))
+
+        result.sort(key=lambda r: r.client_full_name)
         return result

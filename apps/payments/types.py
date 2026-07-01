@@ -233,3 +233,19 @@ class SaldosReportRowType:
     periodicity: str
     classification: str
     daily_payments: List[DailyPaymentType] = strawberry.field(name="dailyPayments")
+
+
+# ─── Reporte de Ganancia por Intereses ───────────────────────────────────────
+
+@strawberry.type
+class InterestEarnedReportRowType:
+    """Fila del reporte de ganancia: préstamo con interés cobrado en el período."""
+    loan_id: int = strawberry.field(name="loanId")
+    client_dni: str = strawberry.field(name="clientDni")
+    client_full_name: str = strawberry.field(name="clientFullName")
+    zone_name: Optional[str] = strawberry.field(name="zoneName", default=None)
+    loan_status: str = strawberry.field(name="loanStatus")
+    initial_amount: Decimal = strawberry.field(name="initialAmount")
+    total_amount: Decimal = strawberry.field(name="totalAmount")
+    interest_earned: Decimal = strawberry.field(name="interestEarned")
+    payments_count: int = strawberry.field(name="paymentsCount")
