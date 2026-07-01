@@ -452,24 +452,23 @@ class PaymentQuery:
         préstamos en cualquier estado (activos, en mora, refinanciados,
         completados) siempre que hayan tenido pagos dentro del período.
         La mora nunca se cuenta aquí porque no pasa por PaymentInstallment.
+
+        El filtro de fecha usa el mismo lookup `payment_date__date` que
+        company_payments/collector_payments (la fuente que consume la app
+        Android en "Pagos"), para que el total cobrado del período cuadre
+        siempre con esa referencia.
         """
         from decimal import ROUND_HALF_UP
-        from datetime import datetime, time as dt_time
-        from zoneinfo import ZoneInfo
 
         user = get_current_user_from_info(info)
         if not user:
             return []
 
-        lima_tz = ZoneInfo('America/Lima')
-        start_dt = datetime.combine(start_date, dt_time.min, tzinfo=lima_tz)
-        end_dt = datetime.combine(end_date, dt_time.max, tzinfo=lima_tz)
-
         payments_qs = Payment.objects.filter(
             company_id=company_id,
             status='COMPLETED',
-            payment_date__gte=start_dt,
-            payment_date__lte=end_dt,
+            payment_date__date__gte=start_date,
+            payment_date__date__lte=end_date,
         ).select_related('loan', 'client', 'client__zone').prefetch_related(
             'payment_installments__installment'
         )
