@@ -78,7 +78,7 @@ class PaymentQuery:
             collector_id=collector_id,
             company_id=company_id,
             status='COMPLETED'
-        )
+        ).exclude(loan__status='CANCELLED')
         if start_date:
             queryset = queryset.filter(payment_date__date__gte=start_date)
         if end_date:
@@ -115,7 +115,7 @@ class PaymentQuery:
         queryset = Payment.objects.filter(
             company_id=company_id,
             status='COMPLETED'
-        ).select_related('loan', 'client', 'collector').prefetch_related('payment_installments')
+        ).exclude(loan__status='CANCELLED').select_related('loan', 'client', 'collector').prefetch_related('payment_installments')
         user = get_current_user_from_info(info)
         if user and user.role == 'COLLECTOR':
             client_ids = list(user.assigned_clients.values_list('id', flat=True))
@@ -189,7 +189,7 @@ class PaymentQuery:
             today_agg = Payment.objects.filter(
                 company_id=company_id, collector_id=collector_id,
                 status='COMPLETED', payment_date__date=today
-            ).aggregate(total=Sum('amount'), cnt=Count('id'))
+            ).exclude(loan__status='CANCELLED').aggregate(total=Sum('amount'), cnt=Count('id'))
 
             return DashboardStatsType(
                 total_clients=len(client_ids),
@@ -218,7 +218,7 @@ class PaymentQuery:
         )
         today_agg = Payment.objects.filter(
             company_id=company_id, status='COMPLETED', payment_date__date=today
-        ).aggregate(total=Sum('amount'), cnt=Count('id'))
+        ).exclude(loan__status='CANCELLED').aggregate(total=Sum('amount'), cnt=Count('id'))
 
         total_clients = Client.objects.filter(company_id=company_id, is_active=True).count()
 
@@ -237,7 +237,7 @@ class PaymentQuery:
             col_today = Payment.objects.filter(
                 company_id=company_id, collector_id=col.id,
                 status='COMPLETED', payment_date__date=today
-            ).aggregate(total=Sum('amount'))['total'] or ZERO
+            ).exclude(loan__status='CANCELLED').aggregate(total=Sum('amount'))['total'] or ZERO
 
             collector_stats.append(CollectorStatType(
                 collector_id=col.id,
@@ -450,7 +450,8 @@ class PaymentQuery:
         Reporte de ganancia: interés efectivamente cobrado (ya pagado por el
         cliente) en el rango de fechas, agrupado por préstamo. Incluye
         préstamos en cualquier estado (activos, en mora, refinanciados,
-        completados) siempre que hayan tenido pagos dentro del período.
+        completados) siempre que hayan tenido pagos dentro del período,
+        excepto los CANCELADOS (esos nunca cuentan como ganancia).
         La mora nunca se cuenta aquí porque no pasa por PaymentInstallment.
 
         El filtro de fecha usa el mismo lookup `payment_date__date` que
@@ -469,7 +470,7 @@ class PaymentQuery:
             status='COMPLETED',
             payment_date__date__gte=start_date,
             payment_date__date__lte=end_date,
-        ).select_related('loan', 'client', 'client__zone').prefetch_related(
+        ).exclude(loan__status='CANCELLED').select_related('loan', 'client', 'client__zone').prefetch_related(
             'payment_installments__installment'
         )
 
