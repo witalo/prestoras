@@ -123,7 +123,38 @@ class User(AbstractUser):
     
     # Cartera de clientes asignados (vía Client.collectors / ClientCollector).
     # Acceso: user.assigned_clients (queryset de Client).
-    
+
+    # Horario de acceso permitido (solo aplica a cobradores). Si schedule_enabled
+    # es False, el usuario puede loguearse a cualquier hora (comportamiento actual).
+    schedule_enabled = models.BooleanField(
+        'Horario restringido',
+        default=False,
+        help_text='Si está activo, el cobrador solo puede ingresar entre schedule_start y schedule_end'
+    )
+    schedule_start = models.CharField(
+        'Hora de inicio (HH:MM)',
+        max_length=5,
+        null=True,
+        blank=True,
+        help_text='Hora de inicio del horario permitido, formato 24h HH:MM'
+    )
+    schedule_end = models.CharField(
+        'Hora de fin (HH:MM)',
+        max_length=5,
+        null=True,
+        blank=True,
+        help_text='Hora de fin del horario permitido, formato 24h HH:MM'
+    )
+
+    # Rastreo GPS opcional (solo para cobradores marcados por el admin, ej. sospechosos
+    # de no visitar a los clientes). Si es False (default), el cobrador registra pagos
+    # normalmente, sin exigir ni guardar punto GPS.
+    gps_tracking_enabled = models.BooleanField(
+        'Rastreo GPS activado',
+        default=False,
+        help_text='Si está activo, este cobrador debe registrar el punto GPS de cada cobro'
+    )
+
     # Campos de Django que usamos
     first_name = models.CharField('Nombres', max_length=150, blank=True)
     last_name = models.CharField('Apellidos', max_length=150, blank=True)

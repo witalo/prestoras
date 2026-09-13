@@ -28,6 +28,10 @@ _PAYMENT_SCALAR_FIELDS = [
     'observations',
     'created_at',
     'updated_at',
+    'latitude',
+    'longitude',
+    'location_provider',
+    'location_accuracy',
 ]
 
 
@@ -100,6 +104,13 @@ class PaymentType:
     def client_name(self) -> str:
         try:
             return self.client.full_name if self.client else ""
+        except Exception:
+            return ""
+
+    @strawberry.field(name="clientDni")
+    def client_dni(self) -> str:
+        try:
+            return self.client.dni if self.client else ""
         except Exception:
             return ""
 

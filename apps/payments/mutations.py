@@ -51,7 +51,11 @@ def create_payment(
     collector_id: int,
     payment_methods: List[PaymentMethodInput],
     installment_ids: Optional[List[int]] = None,
-    notes: Optional[str] = None
+    notes: Optional[str] = None,
+    latitude: Optional[Decimal] = None,
+    longitude: Optional[Decimal] = None,
+    location_provider: Optional[str] = None,
+    location_accuracy: Optional[float] = None,
 ) -> CreatePaymentResult:
     """
     Mutation para registrar un pago (CRÍTICO)
@@ -96,6 +100,8 @@ def create_payment(
                     return CreatePaymentResult(success=False, message="Un cobrador solo puede registrar pagos a su nombre.", payment=None)
                 if not current_user.assigned_clients.filter(id=loan.client_id).exists():
                     return CreatePaymentResult(success=False, message="Este cliente no está en su cartera.", payment=None)
+                if current_user.gps_tracking_enabled and (latitude is None or longitude is None):
+                    return CreatePaymentResult(success=False, message="Se requiere ubicación GPS para registrar el cobro.", payment=None)
 
             try:
                 collector = User.objects.get(id=collector_id, company_id=loan.company_id)
@@ -176,7 +182,11 @@ def create_payment(
                     payment_method=method_input.method,
                     collector=collector,
                     observations=notes,
-                    status='COMPLETED'
+                    status='COMPLETED',
+                    latitude=latitude,
+                    longitude=longitude,
+                    location_provider=location_provider,
+                    location_accuracy=location_accuracy,
                 )
                 p.save()
                 if first_payment is None:

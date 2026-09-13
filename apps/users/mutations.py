@@ -11,6 +11,7 @@ import jwt
 from django.conf import settings
 from django.contrib.auth import authenticate
 from django.core.files.base import ContentFile
+from strawberry.types import Info
 
 from .models import User
 from .types import UserType
@@ -82,6 +83,21 @@ def generate_jwt_token(payload: dict, expires_in_hours: float = None) -> tuple[s
     return token, expires_at
 
 
+def _is_within_schedule(user) -> bool:
+    """
+    True si el usuario puede operar ahora mismo según su horario configurado.
+    Solo aplica a cobradores con schedule_enabled=True; el resto siempre puede.
+    Compara en hora local del servidor (settings.TIME_ZONE = America/Lima).
+    """
+    if user.role != 'COLLECTOR' or not user.schedule_enabled:
+        return True
+    if not user.schedule_start or not user.schedule_end:
+        return True
+    from django.utils import timezone
+    now_hm = timezone.localtime().strftime('%H:%M')
+    return user.schedule_start <= now_hm <= user.schedule_end
+
+
 @strawberry.mutation
 def user_login(
     dni: str,
@@ -135,7 +151,17 @@ def user_login(
                 user=None,
                 expires_at=None
             )
-        
+
+        # Horario de acceso (solo cobradores con schedule_enabled)
+        if not _is_within_schedule(user):
+            return UserLoginResult(
+                success=False,
+                message=f"Fuera de horario permitido. Solo puedes ingresar entre {user.schedule_start} y {user.schedule_end}.",
+                token=None,
+                user=None,
+                expires_at=None
+            )
+
         # Generar token JWT (válido por 24 horas)
         payload = {
             'type': 'user',
@@ -172,9 +198,18 @@ def _get_current_user(info):
     return info.context.get("user") if hasattr(info.context, "get") else getattr(info.context, "user", None)
 
 
+def _valid_hhmm(value: Optional[str]) -> bool:
+    """True si value es None/"" o tiene formato HH:MM (24h) válido."""
+    if not value:
+        return True
+    import re
+    m = re.fullmatch(r'([01]\d|2[0-3]):([0-5]\d)', value)
+    return m is not None
+
+
 @strawberry.mutation
 def create_user(
-    info,
+    info: Info,
     company_id: int,
     dni: str,
     email: str,
@@ -184,6 +219,10 @@ def create_user(
     role: str,
     phone: Optional[str] = None,
     photo_base64: Optional[str] = None,
+    schedule_enabled: Optional[bool] = None,
+    schedule_start: Optional[str] = None,
+    schedule_end: Optional[str] = None,
+    gps_tracking_enabled: Optional[bool] = None,
 ) -> UserOperationResult:
     """Crear usuario (Administrador o Cobrador). Solo ADMIN. Foto opcional."""
     current = _get_current_user(info)
@@ -202,6 +241,8 @@ def create_user(
             return UserOperationResult(success=False, message="Ya existe un usuario con este correo.", user=None)
         if role not in ('ADMIN', 'COLLECTOR'):
             return UserOperationResult(success=False, message="Rol debe ser ADMIN o COLLECTOR.", user=None)
+        if not _valid_hhmm(schedule_start) or not _valid_hhmm(schedule_end):
+            return UserOperationResult(success=False, message="Horario inválido, usa formato HH:MM.", user=None)
         company = Company.objects.get(id=company_id)
         user = User(
             dni=dni,
@@ -212,6 +253,10 @@ def create_user(
             role=role,
             phone=(phone or "").strip() or None,
             is_active=True,
+            schedule_enabled=bool(schedule_enabled),
+            schedule_start=schedule_start or None,
+            schedule_end=schedule_end or None,
+            gps_tracking_enabled=bool(gps_tracking_enabled),
         )
         user.set_password(password)
         user.save()
@@ -227,7 +272,7 @@ def create_user(
 
 @strawberry.mutation
 def update_user(
-    info,
+    info: Info,
     user_id: int,
     email: Optional[str] = None,
     first_name: Optional[str] = None,
@@ -237,11 +282,17 @@ def update_user(
     is_active: Optional[bool] = None,
     new_password: Optional[str] = None,
     photo_base64: Optional[str] = None,
+    schedule_enabled: Optional[bool] = None,
+    schedule_start: Optional[str] = None,
+    schedule_end: Optional[str] = None,
+    gps_tracking_enabled: Optional[bool] = None,
 ) -> UserOperationResult:
     """Actualizar usuario. Solo ADMIN de la misma empresa. Foto opcional (vacío = quitar foto)."""
     current = _get_current_user(info)
     if not current or not current.is_authenticated or current.role != 'ADMIN':
         return UserOperationResult(success=False, message="Solo administrador puede editar usuarios.", user=None)
+    if not _valid_hhmm(schedule_start) or not _valid_hhmm(schedule_end):
+        return UserOperationResult(success=False, message="Horario inválido, usa formato HH:MM.", user=None)
     try:
         user = User.objects.get(id=user_id)
         if user.company_id != current.company_id:
@@ -263,6 +314,14 @@ def update_user(
             user.phone = phone.strip() or None
         if is_active is not None:
             user.is_active = is_active
+        if schedule_enabled is not None:
+            user.schedule_enabled = schedule_enabled
+        if schedule_start is not None:
+            user.schedule_start = schedule_start or None
+        if schedule_end is not None:
+            user.schedule_end = schedule_end or None
+        if gps_tracking_enabled is not None:
+            user.gps_tracking_enabled = gps_tracking_enabled
         if new_password is not None and (new_password or "").strip():
             if len(new_password) < 4:
                 return UserOperationResult(success=False, message="La contraseña debe tener al menos 4 caracteres.", user=None)
@@ -284,7 +343,7 @@ def update_user(
 
 @strawberry.mutation
 def update_profile(
-    info,
+    info: Info,
     first_name: Optional[str] = None,
     last_name:  Optional[str] = None,
     email:      Optional[str] = None,
@@ -314,7 +373,7 @@ def update_profile(
 
 @strawberry.mutation
 def change_password(
-    info,
+    info: Info,
     current_password: str,
     new_password:     str,
 ) -> UserOperationResult:
@@ -338,7 +397,7 @@ def change_password(
 
 @strawberry.mutation
 def admin_set_password(
-    info,
+    info: Info,
     user_id: int,
     new_password: str,
 ) -> UserOperationResult:

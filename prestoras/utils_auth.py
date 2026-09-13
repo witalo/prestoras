@@ -51,6 +51,10 @@ def get_session_error_message(info):
     Usar cuando user is None para dar el mensaje correcto al cliente.
     """
     ctx = info.context if hasattr(info.context, 'get') else None
+    if ctx and ctx.get('schedule_blocked'):
+        # Frase en ASCII sin tildes a propósito: la app Android detecta "fuera de horario"
+        # como texto plano en la respuesta para forzar el logout automático.
+        return "Fuera de horario laboral. Sesion expirada."
     if ctx and ctx.get('token_provided'):
         return "Sesión inválida o expirada."
     return "No autenticado."

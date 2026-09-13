@@ -124,7 +124,38 @@ class Payment(models.Model):
         null=True,
         help_text='Observaciones adicionales sobre el pago'
     )
-    
+
+    # Ubicación GPS del cobro (capturada por la app móvil al momento de registrar el pago)
+    latitude = models.DecimalField(
+        'Latitud',
+        max_digits=10,
+        decimal_places=7,
+        null=True,
+        blank=True,
+        help_text='Latitud del punto donde se registró el cobro'
+    )
+    longitude = models.DecimalField(
+        'Longitud',
+        max_digits=10,
+        decimal_places=7,
+        null=True,
+        blank=True,
+        help_text='Longitud del punto donde se registró el cobro'
+    )
+    location_provider = models.CharField(
+        'Proveedor de ubicación',
+        max_length=10,
+        null=True,
+        blank=True,
+        help_text='Proveedor usado para obtener el punto: GPS o NETWORK'
+    )
+    location_accuracy = models.FloatField(
+        'Precisión (m)',
+        null=True,
+        blank=True,
+        help_text='Precisión en metros del punto GPS capturado'
+    )
+
     # Auditoría
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
